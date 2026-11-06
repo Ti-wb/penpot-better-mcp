@@ -1,6 +1,7 @@
 {
   "name": "penpot-better-mcp",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "Headless Penpot MCP gateway with a managed browser adapter",

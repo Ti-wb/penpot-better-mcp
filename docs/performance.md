@@ -20,7 +20,7 @@ Concurrent reads/increments, overload, and 60 repeated full-file scans passed. C
 
 ## Multiple clients and pages
 
-Four independent SDK clients, excluding LLM thinking time, deliberately delayed writes to verify execution overlap and serialization. The baseline was a single global queue (`0121378`); the per-file pool capacity was two.
+Four independent SDK clients, excluding LLM thinking time, deliberately delayed writes to verify execution overlap and serialization. The baseline was a single global queue (`92b780f`); the per-file pool capacity was two.
 
 | Same internal-instance script | Global queue | Per-file workers |
 |---|---:|---:|

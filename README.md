@@ -140,3 +140,7 @@ Each guide is available in English and Traditional Chinese:
 - [Architecture and diagnostics](docs/architecture.md): routing, persistence, logs, and extension points.
 - [Testing](docs/testing.md): isolated fixtures, real-instance acceptance, and coverage boundaries.
 - [Performance](docs/performance.md): read/write overhead, concurrency, and resource measurements.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE). Penpot and other dependencies retain their own licenses.

@@ -140,3 +140,7 @@ npm run build
 - [架構與診斷](docs/architecture.zh-TW.md)：路由、持久化、紀錄與擴充方向。
 - [測試指南](docs/testing.zh-TW.md)：隔離 fixture、真實站點驗收與覆蓋邊界。
 - [效能摘要](docs/performance.zh-TW.md)：讀寫開銷、併發與資源量測。
+
+## 授權
+
+本專案採用 [MIT License](LICENSE)。Penpot 與其他相依套件維持各自的授權。
