@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { DesignAdapter, ExportOptions, SaveMode } from './adapter.js';
-import { parseDocument, type DocumentTarget } from './document.js';
+import { parseDocument, targetPage, type DocumentTarget } from './document.js';
 import { GatewayError } from './errors.js';
 
 export class Gateway {
@@ -37,6 +37,18 @@ export class Gateway {
     });
   }
   inspect(handle: string) { return this.serial(() => this.adapter.open(this.target(handle))); }
+  openPage(handle: string, pageId: string) {
+    return this.serial(async () => {
+      if (this.documents.size >= 128) throw new GatewayError('DOCUMENT_LIMIT', 'Close unused document handles first.');
+      const source = this.target(handle); const target = targetPage(source, pageId);
+      try {
+        const result = await this.adapter.openPage(source, target);
+        if (result.isError) { this.adapter.release(target); return { result }; }
+        const documentHandle = randomUUID(); this.documents.set(documentHandle, target);
+        return { documentHandle, fileId: target.fileId, pageId: target.pageId, result };
+      } catch (error) { this.adapter.release(target); throw error; }
+    });
+  }
   execute(handle: string, code: string, save: SaveMode = 'wait') { return this.serial(() => this.adapter.execute(this.target(handle), code, save)); }
   flush(handle: string) { return this.serial(() => this.adapter.flush(this.target(handle))); }
   export(handle: string, args: ExportOptions) { return this.serial(() => this.adapter.exportShape(this.target(handle), args)); }

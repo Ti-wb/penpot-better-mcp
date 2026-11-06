@@ -16,7 +16,25 @@ const file = '22222222-2222-4222-8222-222222222222';
 const page = '33333333-3333-4333-8333-333333333333';
 const url = `${base}/#/workspace?team-id=${team}&file-id=${file}&page-id=${page}`;
 const ok = { content: [{ type: 'text' as const, text: '{}' }] };
-function fake(): DesignAdapter { return { open: async () => ok, execute: async () => ok, flush: async () => ok, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
+function fake(): DesignAdapter { return { open: async () => ok, openPage: async () => ok, execute: async () => ok, flush: async () => ok, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
+
+test('page handles keep independent targets and failed page opens release their binding', async () => {
+  const adapter = fake(); const seen: (string | undefined)[] = []; let released = 0;
+  adapter.execute = async target => { seen.push(target.pageId); return ok; };
+  adapter.release = () => { released++; };
+  const gateway = new Gateway(adapter, base);
+  try {
+    const first = await gateway.open(url);
+    const second = await gateway.openPage(first.documentHandle!, file);
+    assert.notEqual(second.documentHandle, first.documentHandle);
+    await gateway.execute(first.documentHandle!, 'read'); await gateway.execute(second.documentHandle!, 'read');
+    assert.deepEqual(seen, [page, file]);
+    adapter.openPage = async () => { throw new GatewayError('PAGE_NOT_FOUND', 'missing'); };
+    await assert.rejects(gateway.openPage(first.documentHandle!, page), /missing/);
+    assert.equal(released, 1);
+    await assert.rejects(gateway.openPage(first.documentHandle!, 'not-a-uuid'), /UUID/);
+  } finally { await gateway.shutdown(); }
+});
 
 test('flags official plain-text failures without misclassifying user return values', () => {
   assert.equal(normalizeUpstreamResult({content:[{type:'text',text:'Tool execution failed: Error: connection lost'}]}).isError,true);
@@ -98,8 +116,12 @@ test('HTTP requires bearer auth, rejects browser origins and serves a real MCP c
     assert.equal((await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,Origin:'https://evil.example'}})).status,403);
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint),{requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
     assert((await client.listTools()).tools.some(t=>t.name==='open_document'));
+    assert((await client.listTools()).tools.some(t=>t.name==='open_page'));
     const result = await client.callTool({name:'open_document',arguments:{url}});
     assert(!result.isError);
+    const opened = JSON.parse((result.content as {text: string}[])[0].text);
+    const selected = await client.callTool({name:'open_page',arguments:{documentHandle:opened.documentHandle,pageId:page}});
+    assert(!selected.isError);
     adapter.open = async () => ({...ok,isError:true});
     const failed = await client.callTool({name:'open_document',arguments:{url}});
     assert.equal(failed.isError,true);

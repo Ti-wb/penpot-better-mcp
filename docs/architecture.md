@@ -24,6 +24,8 @@ Authentication uses an interactive terminal with masked password entry and the P
 
 The adapter verifies file/page identity before dispatch. Warm `execute_code` calls use the identity guard in the same dispatched script, removing a redundant round trip. Exports still verify context separately. Penpot remains responsible for user/file permissions. Share-link access must use a future restricted read adapter; it is deliberately rejected in the editor path. Local browser JavaScript, especially arbitrary `execute_code`, is trusted as a user-authorized operation rather than sandboxed against that same user.
 
+`open_page(handle, pageId)` creates a new immutable page-bound handle in the same file. It flushes pending saves and navigates through the existing Plugin without reloading the editor; other handles retain their original targets. Raw navigation inside user code can still change the editor. The inline guard then returns `DOCUMENT_CONTEXT_CHANGED` with expected/actual IDs and recovery guidance before executing the next user script. Its per-call marker avoids confusing ordinary returned data with a gateway failure and adds no warm-path RPC.
+
 ## Recovery and persistence
 
 - The adapter does not retry dispatched code. Lost responses cause browser teardown and `EXECUTION_UNKNOWN`.

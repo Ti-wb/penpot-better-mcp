@@ -55,6 +55,7 @@ MCP client 啟動命令可設定為 `docker`，arguments 為：
 |---|---|
 | `open_document(url)` | 開啟檔案，回傳 `documentHandle`、檔案資訊及頁面清單 |
 | `inspect_document(documentHandle)` | 讀取目前文件資訊 |
+| `open_page(documentHandle, pageId)` | 同檔切頁並取得新的頁面 handle，保留舊 handle 的目標；重用目前 editor |
 | `execute_code(documentHandle, code, save?)` | 使用官方 Plugin API 執行 JavaScript；`save` 可選 `wait` 或 `deferred` |
 | `flush_document(documentHandle)` | 等待先前批次寫入完成儲存 |
 | `export_shape(documentHandle, shapeId, format, mode?)` | 回傳 PNG 圖片或 SVG 文字；`mode=fill` 匯出原始圖片填色（PNG） |
@@ -63,6 +64,8 @@ MCP client 啟動命令可設定為 `docker`，arguments 為：
 | `penpot_api_info(type, member?)` | 官方 API 文件 |
 
 先讀取概覽及所需 API 文件，再執行操作。每次工具呼叫都指定 handle，避免使用隱含的「目前分頁」。程式碼必須 `await` 自己啟動的工作，不要留下未等待的背景修改。Plugin 的 `storage` 會在切檔、閒置回收及恢復 browser 時重置，需延續使用的物件 ID 請由 client 保存。本次官方 sidecar 的工具清單不含本機路徑 `import_image`；圖片可透過 `execute_code` 與 Plugin media API 匯入。
+
+切頁請呼叫 `open_page(handle, pageId)`，並使用回傳的 **新 handle**。它會先確認儲存，再透過目前 editor 切頁，不會重新載入瀏覽器分頁。建立頁面時先用 `execute_code` 回傳 `penpot.createPage()` 的 ID，再交給 `open_page`。若程式自行呼叫 `penpot.openPage`，下一次沿用原頁 handle 會回 `DOCUMENT_CONTEXT_CHANGED`，附上 `details.expected`／`details.actual`；該次使用者程式尚未執行。此時明確選擇頁面取得新 handle 即可，舊 handle 不會被靜默改綁。
 
 預設 `save: "wait"` 會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。高頻讀取或連續批次修改請用 `save: "deferred"`，避免每一筆都等待儲存；完成一批寫入後呼叫 `flush_document`。切檔、正常關閉與閒置回收也會等待儲存。
 
@@ -111,6 +114,7 @@ npm run fixture:setup
 E2E_TARGETS_FILE=.state/latest-targets.json PENPOT_STORAGE_STATE=.state/latest-session.json E2E_REPORT=latest.json npm run test:e2e
 npm run test:recovery
 npm run test:batch
+npm run test:pages
 # 四項審查問題的故障回歸（需要額外的短逾時 sidecar）：
 docker compose -f test/compose.yaml --profile faults up -d penpot-mcp-timeout
 npm run test:lifecycle

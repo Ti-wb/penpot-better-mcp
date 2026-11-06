@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -8,7 +8,7 @@ import { WebSocket } from 'ws';
 import type { Config } from './config.js';
 import type { DocumentTarget } from './document.js';
 import type { DesignAdapter, ExportOptions, SaveMode } from './adapter.js';
-import { GatewayError } from './errors.js';
+import { GatewayError, publicError } from './errors.js';
 import { isUpstreamTaskTimeout, normalizeUpstreamResult } from './upstream-result.js';
 
 interface FileState { epoch: number; handles: number; }
@@ -290,13 +290,55 @@ export class HeadlessAdapter implements DesignAdapter {
     return binding.epoch === binding.file.epoch ? result : { ...result, _meta: { ...result._meta, saveState: 'unknown' } };
   }
 
+  private async checkedCall(target: DocumentTarget, code: string, checkPage = true) {
+    const marker = randomUUID();
+    const expected = { fileId: target.fileId, pageId: checkPage ? target.pageId ?? null : null };
+    const guard = `if(penpot.currentFile?.id!==${JSON.stringify(target.fileId)}${checkPage && target.pageId ? ` || penpot.currentPage?.id!==${JSON.stringify(target.pageId)}` : ''}) return {gatewayContext:${JSON.stringify(marker)},actual:{fileId:penpot.currentFile?.id??null,pageId:penpot.currentPage?.id??null}};`;
+    const result = await this.call('execute_code', { code: `${guard}\nreturn await (async()=>{\n${code}\n})();` });
+    // Only decode the failure marker. Large successful reads keep the same
+    // upstream shape and avoid an additional JSON parse or RPC.
+    const text = result.content.find(item => item.type === 'text' && item.text.includes(marker));
+    if (text?.type === 'text') {
+      let value;
+      try { value = JSON.parse(text.text).result; } catch { return result; }
+      if (value?.gatewayContext === marker) {
+        const error = new GatewayError('DOCUMENT_CONTEXT_CHANGED',
+          'No user code from this call ran. The editor no longer matches this handle. Use open_page(documentHandle, pageId) to select a page explicitly, or open_document with the intended editor URL for a new handle.', false,
+          { expected, actual: value.actual });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(publicError(error)) }], isError: true };
+      }
+    }
+    return result;
+  }
+
+  async openPage(source: DocumentTarget, target: DocumentTarget) {
+    if (source.fileId !== target.fileId || !target.pageId) throw new GatewayError('INVALID_PAGE', 'Select a page in the same file.');
+    this.assertCertain(source);
+    await this.activate(source, false);
+    this.assertCertain(source);
+    await this.waitForSave();
+    const missing = randomUUID();
+    const result = await this.checkedCall(source, `const id=${JSON.stringify(target.pageId)};
+if(!penpotUtils.getPages().some(p=>p.id===id))return {missingPage:${JSON.stringify(missing)}};
+await penpot.openPage(penpotUtils.getPageById(id));
+return {fileId:penpot.currentFile.id,pageId:penpot.currentPage.id,pages:penpotUtils.getPages()};`, false);
+    if (result.isError) return result;
+    const text = result.content.find(item => item.type === 'text');
+    const value = text?.type === 'text' ? JSON.parse(text.text).result : undefined;
+    if (value?.missingPage === missing) throw new GatewayError('PAGE_NOT_FOUND', 'The requested page is not in this file. Inspect the page list before opening it.');
+    if (value?.fileId !== target.fileId || value?.pageId !== target.pageId) throw new GatewayError('DOCUMENT_CONTEXT_CHANGED', 'The requested page did not become active. Open the intended editor URL before editing.');
+    this.assertCertain(source);
+    this.binding(target);
+    this.editor!.target = target;
+    return result;
+  }
+
   async execute(target: DocumentTarget, code: string, save: SaveMode = 'wait') {
     this.assertCertain(target);
     await this.activate(target, false);
     this.assertCertain(target);
-    const check = `if(penpot.currentFile?.id!==${JSON.stringify(target.fileId)}${target.pageId ? ` || penpot.currentPage?.id!==${JSON.stringify(target.pageId)}` : ''}) throw new Error("DOCUMENT_CONTEXT_CHANGED");`;
     this.editor!.needsSaveCheck = true; this.editor!.pending = true;
-    const result = await this.call('execute_code', { code: `${check}\nreturn await (async()=>{\n${code}\n})();` });
+    const result = await this.checkedCall(target, code);
     // Tool errors can follow partial edits, so also wait for pending saves on errors.
     if (save === 'wait') await this.waitForSave();
     this.assertCertain(target);
