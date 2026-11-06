@@ -8,7 +8,7 @@ import { Diagnostics } from '../src/diagnostics.js';
 import { loadConfig } from '../src/config.js';
 
 const base = 'https://penpot.example';
-const id = (i: number) => `11111111-1111-4111-8111-${String(i).padStart(12, '0')}`;
+const id = (i: number) => `abcdefab-1111-4111-8111-${String(i).padStart(12, '0')}`;
 const url = (i: number) => `${base}/#/workspace?team-id=${id(0)}&file-id=${id(i)}&page-id=${id(9)}`;
 const ok = {content: [{type: 'text' as const, text: '{}'}]};
 function gate() { let resolve!: () => void; const promise = new Promise<void>(r => { resolve = r; }); return {promise, resolve}; }
@@ -45,7 +45,9 @@ test('distinct files overlap; aliases of one file share one queue, adapter and p
   try {
     const [a,b] = await Promise.all([g.open(url(1)),g.open(url(2))]);
     const alias = await g.open(url(1).replace(id(0), id(8)));
-    const page = await g.openPage(a.documentHandle!, id(7));
+    const upper = await g.open(url(1).replace(id(1), id(1).toUpperCase()));
+    const page = await g.openPage(a.documentHandle!, id(7).toUpperCase());
+    assert.equal(upper.fileId,id(1));assert.equal(page.pageId,id(7));
     assert.equal(f.adapters.size,2);
     const adapter = f.adapters.get(id(1))!, execute = adapter.execute;
     adapter.execute = async (...args) => { started.resolve(); await release.promise; return execute(...args); };
