@@ -16,6 +16,7 @@
     "test:e2e": "tsx test/e2e.ts",
     "test:recovery": "tsx test/recovery.ts",
     "test:batch": "tsx test/batch.ts",
+    "test:lifecycle": "tsx test/lifecycle.ts",
     "test:load": "tsx test/load.ts",
     "auth": "tsx src/auth-cli.ts",
     "init": "node scripts/init-state.mjs",

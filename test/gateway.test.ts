@@ -8,7 +8,7 @@ import { createHttpApp } from '../src/http.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AddressInfo } from 'node:net';
-import { normalizeUpstreamResult } from '../src/upstream-result.js';
+import { isUpstreamTaskTimeout, normalizeUpstreamResult } from '../src/upstream-result.js';
 
 const base = 'https://penpot.example';
 const team = '11111111-1111-4111-8111-111111111111';
@@ -16,11 +16,28 @@ const file = '22222222-2222-4222-8222-222222222222';
 const page = '33333333-3333-4333-8333-333333333333';
 const url = `${base}/#/workspace?team-id=${team}&file-id=${file}&page-id=${page}`;
 const ok = { content: [{ type: 'text' as const, text: '{}' }] };
-function fake(): DesignAdapter { return { open: async () => ok, execute: async () => ok, flush: async () => ok, exportShape: async () => ok, documentation: async () => ok, close: async () => {} }; }
+function fake(): DesignAdapter { return { open: async () => ok, execute: async () => ok, flush: async () => ok, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
 
 test('flags official plain-text failures without misclassifying user return values', () => {
   assert.equal(normalizeUpstreamResult({content:[{type:'text',text:'Tool execution failed: Error: connection lost'}]}).isError,true);
   assert(!normalizeUpstreamResult({content:[{type:'text',text:JSON.stringify({result:'Tool execution failed: user data'})}]}).isError);
+  const timeout = `Tool execution failed: Error: Task ${file} timed out after 120 seconds`;
+  assert(isUpstreamTaskTimeout({content:[{type:'text',text:timeout}]}));
+  assert(!isUpstreamTaskTimeout({content:[{type:'text',text:JSON.stringify({result:timeout})}]}));
+  assert(!isUpstreamTaskTimeout({content:[{type:'text',text:'Tool execution failed: Error: user timeout'}]}));
+});
+
+test('releases bindings on failed opens, closed handles and shutdown', async () => {
+  const adapter = fake(); const live = new Set<object>(); let failed = false;
+  adapter.open = async target => { live.add(target); return failed ? {...ok,isError:true} : ok; };
+  adapter.release = target => { live.delete(target); };
+  const gateway = new Gateway(adapter, base);
+  try {
+    failed = true; await gateway.open(url); assert.equal(live.size,0);
+    failed = false; const first=await gateway.open(url); await gateway.open(url); assert.equal(live.size,2);
+    await gateway.closeDocument(first.documentHandle!); assert.equal(live.size,1);
+  } finally {await gateway.shutdown();}
+  assert.equal(live.size,0);
 });
 
 test('deferred writes and their flush remain in order, with waiting the default', async () => {

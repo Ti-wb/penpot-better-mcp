@@ -11,5 +11,7 @@ export interface DesignAdapter {
   flush(target: DocumentTarget): Promise<CallToolResult>;
   exportShape(target: DocumentTarget, args: ExportOptions): Promise<CallToolResult>;
   documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>): Promise<CallToolResult>;
+  /** Release bookkeeping after a handle is discarded; does not flush or close. */
+  release(target: DocumentTarget): void;
   close(): Promise<void>;
 }

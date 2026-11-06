@@ -29,7 +29,15 @@ try {
   check('upstream timeout returns an uncertain outcome');
   const recovered = await call(client,'inspect_document',{documentHandle}); assert(!recovered.isError);
   assert.equal(data(recovered).result.fileId,targets.files[0].id);
-  check('fresh browser recovers the same bound document after timeout');
+  assert.equal(recovered._meta?.saveState,'unknown');
+  const staleFlush=await call(client,'flush_document',{documentHandle});
+  assert(staleFlush.isError);assert.equal(data(staleFlush).code,'SAVE_UNCONFIRMED');
+  const fresh=await call(client,'open_document',{url:targets.files[0].url});assert(!fresh.isError);
+  const freshHandle=data(fresh).documentHandle;
+  const readback=await call(client,'execute_code',{documentHandle:freshHandle,code:'return penpot.currentFile.id;'});
+  assert(!readback.isError);assert.equal(data(readback).result,targets.files[0].id);
+  check('recovery preserves old-handle uncertainty and allows readback through a fresh handle');
+  await call(client,'close_document',{documentHandle:freshHandle});
   await call(client,'close_document',{documentHandle});
 } finally { await client.close(); }
 
