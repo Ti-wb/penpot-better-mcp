@@ -7,11 +7,13 @@ import { HeadlessAdapter } from './headless-adapter.js';
 import { Gateway } from './gateway.js';
 import { createMcpServer } from './server.js';
 import { createHttpApp } from './http.js';
+import { Diagnostics } from './diagnostics.js';
 
 async function main() {
   if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync('.runtime/browsers')) process.env.PLAYWRIGHT_BROWSERS_PATH = resolve('.runtime/browsers');
   const config = loadConfig();
-  const gateway = new Gateway(new HeadlessAdapter(config), config.baseUrl, config.idleMs);
+  const diagnostics = new Diagnostics(config.diagnostics ? record => console.error(JSON.stringify(record)) : undefined);
+  const gateway = new Gateway(new HeadlessAdapter(config, diagnostics), config.baseUrl, config.idleMs, diagnostics);
   let closeListener: () => void = () => {};
   let stopping = false;
   const stop = async () => { if (stopping) return; stopping = true; closeListener(); await gateway.shutdown(); process.exit(0); };

@@ -8,6 +8,7 @@ export interface Config {
   pluginWsPath: string;
   timeoutMs: number;
   idleMs: number;
+  diagnostics: boolean;
 }
 
 export function loadConfig(env = process.env): Config {
@@ -15,6 +16,7 @@ export function loadConfig(env = process.env): Config {
   if (base.username || base.password || base.search || base.hash || base.pathname !== '/') throw new Error('PENPOT_BASE_URL must be an origin');
   if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname))) throw new Error('Use HTTPS, except for a loopback test site');
   const positive = (value: string | undefined, fallback: number) => { const n = Number(value || fallback); if (!Number.isSafeInteger(n) || n < 1000) throw new Error('Timeouts must be integers >= 1000'); return n; };
+  if (env.PENPOT_DIAGNOSTICS !== undefined && !['true', 'false'].includes(env.PENPOT_DIAGNOSTICS)) throw new Error('PENPOT_DIAGNOSTICS must be true or false');
   return {
     baseUrl: base.origin,
     storageState: resolve(env.PENPOT_STORAGE_STATE || '.state/session.json'),
@@ -23,5 +25,6 @@ export function loadConfig(env = process.env): Config {
     pluginWsPath: env.PENPOT_PLUGIN_WS_PATH || '/mcp/ws',
     timeoutMs: positive(env.PENPOT_TIMEOUT_MS, 120_000),
     idleMs: positive(env.PENPOT_IDLE_MS, 600_000),
+    diagnostics: env.PENPOT_DIAGNOSTICS !== 'false',
   };
 }
