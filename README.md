@@ -1,89 +1,137 @@
 # Penpot Better MCP
 
-讓 MCP client 提供 Penpot workspace 連結，就能在 Linux VM 的 headless Chromium 中開檔、讀寫及匯出，不需要使用者維持瀏覽器分頁。不同檔案可平行，同檔案的所有頁面與 handles 依序執行。
+**English** | [繁體中文](README.zh-TW.md)
 
-目前每個 Gateway 對應一位已登入使用者與一個 Penpot 站點。透過官方 MCP／內建 Plugin 執行操作，權限仍由 Penpot 判定。分享／viewer 連結、SSO/MFA 自動登入、多租戶與方案 C 的直接後端 API 尚未實作；SSO 使用者可提供已授權的 Playwright storageState。
+**Give your agent a Penpot link. The gateway handles the browser.**
 
-## Docker 啟動
+Penpot Better MCP wraps the official Penpot MCP with automatic file routing, managed headless browsers, and multi-agent scheduling. After setup and login, agents can open, read, edit, and export designs from workspace links. Users do not need to open a browser, connect the Penpot plugin, or keep a design tab active themselves.
 
-需要 Docker Compose、Node.js 22+（初始化 token）及可登入的 Penpot 站點，不需要桌面或 `DISPLAY`。設定以 [.env.example](.env.example) 為參考；站點可在 `.env` 的 `PENPOT_BASE_URL` 調整。
+The goal is a workflow closer to tools such as Figma: connect once, share a design link, and let agents work in the right file.
+
+## What changes from the official MCP?
+
+The [official Penpot MCP workflow](https://help.penpot.app/mcp/) connects a plugin inside an open Penpot tab and follows its focused page. This gateway manages those editor sessions for you.
+
+| Task | Official plugin workflow | Penpot Better MCP |
+|---|---|---|
+| Start working | Open a file in a browser and connect MCP | Pass a workspace URL; the gateway opens and connects a headless editor |
+| Switch files or pages | Manage the active tab and focused page | Each document handle identifies its file and page; calls activate the correct target automatically |
+| Run multiple agents | MCP uses the active tab's context | Different files run in parallel; calls to the same file, including different pages, run in sequence |
+| Work on a Linux VM | Arrange a running browser and plugin session | Run the supplied Docker setup without a desktop or `DISPLAY` |
+
+Operations still use the official MCP and Plugin API under the logged-in user's Penpot permissions. See the [upstream project](https://github.com/penpot/penpot/tree/develop/mcp) for the underlying protocol and tools.
+
+## Resource requirements
+
+**The computer running this gateway automatically runs headless Chromium.** It needs CPU and RAM for full Penpot editors. Large files, images, and more simultaneously open files increase that cost; the browser pool limits their number, not each editor's memory usage.
+
+Allow several GiB of available RAM and CPU headroom. One measured four-client/PNG workload peaked at about **2.3 GiB for the gateway container**; this is a workload-specific observation, not a minimum requirement or upper bound. The [performance notes](docs/performance.md) explain the measurements and limitations.
+
+The default is two resident file browsers. For a smaller VM or mostly one large file, start with `PENPOT_MAX_WORKERS=1`. Raising it enables more parallel files but does not make calls within one file parallel. Idle browsers are reclaimed after ten minutes by default and reopened when needed.
+
+## Quick start with Docker
+
+Requires Docker Compose, Node.js 22+ for token initialization, and a Penpot account with access to the target files and permission to enable MCP. The login helper supports email/password login in your terminal.
+
+Create or edit `.env` with your Penpot origin, using [.env.example](.env.example) as a reference:
+
+```dotenv
+PENPOT_BASE_URL=https://penpot.example.com
+```
+
+Run from the repository directory. Replace the login URL below with the same origin:
 
 ```bash
 node scripts/init-state.mjs
 docker compose build gateway
-# 在自己的互動式 terminal 登入，密碼不回顯；網址須與 Gateway 設定一致。
 docker compose run --rm auth --base-url https://penpot.example.com --enable-mcp
 docker compose up -d upstream gateway
 curl http://127.0.0.1:4545/healthz
 ```
 
-先登入產生 `.state/session.json` 才啟動 Gateway。`--enable-mcp` 只在必要時啟用帳號的 MCP，不會輪替既有有效金鑰。若主機 UID/GID 不是 `1000:1000`，請設定 `LOCAL_UID`／`LOCAL_GID`。
+Run login in your own interactive terminal; the password is hidden and is not saved. `--enable-mcp` enables MCP when needed without rotating an existing valid key. Login must finish before starting the gateway. If your host UID/GID differs from `1000:1000`, set `LOCAL_UID` and `LOCAL_GID` in `.env` first.
 
-Session 與 bearer token 保存在本機 `.state`，權限為 `0600`；Git、映像建置排除該目錄，Gateway 僅唯讀掛載。Session 過期後重新執行登入指令；`/healthz` 只表示服務存活，不代表登入仍有效。
+The session and gateway token are stored locally in `.state` with mode `0600`, excluded from Git and image builds, and mounted read-only by the gateway. If the session expires, repeat login and recreate the gateway. `/healthz` checks service liveness, not whether the Penpot session is still authorized.
 
-## 連接 MCP client
+## Connect your MCP client
 
-Streamable HTTP endpoint 為 `http://127.0.0.1:4545/mcp`，需帶 `Authorization: Bearer <.state/gateway-token 的內容>`。Token 代表該 Gateway 的完整操作權限；保留 loopback binding，跨主機使用 SSH tunnel。
+- **Transport:** Streamable HTTP
+- **Endpoint:** `http://127.0.0.1:4545/mcp`
+- **Authorization header:** `Bearer <contents of .state/gateway-token>`
 
-多個 Agent 請共用同一 HTTP endpoint，才能共用同檔佇列。獨立 stdio processes 不共用鎖。單一 client 也可透過 stdio 啟動：
+Keep the token in the client's secret configuration: it grants access through the gateway's Penpot account. The supplied Compose setup binds to loopback; use an SSH tunnel for clients on another machine.
+
+**All agents must share the same HTTP endpoint to share scheduling.** Agent A can edit file A while Agent B edits file B. If both target the same file, each tool call waits its turn, even when they target different pages. Separate gateway or stdio processes do not share locks.
+
+A single client can also launch the gateway over stdio. Use the repository as its working directory:
 
 ```bash
 docker compose up -d upstream
 docker compose run --rm --no-deps -T gateway --stdio
 ```
 
-Client 啟動命令為 `docker`，arguments 如下；專案路徑請替換為本機絕對路徑：
+Reconnect or refresh tool discovery after upgrades if your client retains an older tool list.
 
-```json
-["compose", "--project-directory", "/absolute/path/to/penpot-better-mcp", "run", "--rm", "--no-deps", "-T", "gateway", "--stdio"]
+## Configuration and tradeoffs
+
+Edit these settings in `.env`. The supplied [compose.yaml](compose.yaml) passes them to the relevant services:
+
+| Setting | Default | What it changes |
+|---|---|---|
+| `PENPOT_BASE_URL` | `https://penpot.example.com` | Set your Penpot origin, without a file path. Use HTTPS except for loopback test sites; sign in to the same origin. |
+| `PENPOT_MAX_WORKERS` | `2` | Resident file browsers, from `1` to `16`. More allows more parallel files and consumes more CPU/RAM. |
+| `PENPOT_IDLE_MS` | `600000` (10 min) | Idle time before browser reclamation; minimum `1000`. A shorter interval releases resources sooner but causes more editor reloads. |
+| `PENPOT_DIAGNOSTICS` | `true` | Set `false` to disable routine operation logs; shutdown failure logs remain available. |
+| `GATEWAY_PORT` | `4545` | Host HTTP port. Update the client endpoint when changing it. |
+| `GATEWAY_STOP_GRACE_PERIOD` | `5m` | Time Docker allows for accepted work and saves to finish before forcing a stop. Shortening it can interrupt work. |
+| `LOCAL_UID` / `LOCAL_GID` | `1000` / `1000` | Container user IDs; match the owner of your local `.state` directory. |
+
+For example, set `PENPOT_MAX_WORKERS=1` and `PENPOT_IDLE_MS=300000` for one resident file and five-minute idle reclamation. After agents finish their current work, apply changes with:
+
+```bash
+docker compose up -d --force-recreate gateway
 ```
 
-## 工具與使用方式
+Restarting invalidates document handles; clients must reopen documents. Changing the site also requires a session for the new site. `.env.example` includes additional native Node settings; only variables referenced by `compose.yaml` affect this Docker setup. Native Node reads shell environment variables or an explicit `node --env-file=.env dist/main.js`; it does not load `.env` automatically.
 
-| Tool | 用途 |
+To stop the service, use `docker compose down`. The gateway drains accepted operations and confirms saves before closing; failed shutdown saves are retried. Docker's grace period still bounds that wait.
+
+## Tools and everyday use
+
+| Tool | Purpose |
 |---|---|
-| `open_document(url)` | 自動開檔，取得 `documentHandle` 與文件資訊 |
-| `inspect_document(documentHandle)` | 讀取文件資訊與恢復狀態 |
-| `open_page(documentHandle, pageId)` | 切頁並取得新 handle，保留舊 handle 的頁面目標 |
-| `execute_code(documentHandle, code, save?)` | 執行官方 Plugin API；`save` 為 `wait`（預設）或 `deferred` |
-| `flush_document(documentHandle)` | 確認先前批次寫入已儲存 |
-| `export_shape(documentHandle, shapeId, format, mode?)` | PNG／SVG；`mode=fill` 可匯出 PNG 原始圖片填色 |
-| `close_document(documentHandle)` | 確認儲存並釋放 handle，同檔最後一個 handle 回收瀏覽器 |
-| `high_level_overview()` | 官方操作概覽與 Gateway 指引 |
-| `penpot_api_info(type, member?)` | 官方型別／成員文件 |
+| `open_document` | Open a workspace URL and return a `documentHandle` |
+| `inspect_document` | Inspect document information and recovery status |
+| `open_page` | Return a handle for another page, keeping the old handle bound to its original page |
+| `execute_code` | Read or modify designs through the official Plugin API |
+| `flush_document` | Confirm pending batch changes are saved |
+| `export_shape` | Export PNG/SVG; `mode=fill` exports the original PNG image fill |
+| `close_document` | Confirm saves and release a handle; closing the last handle for a file releases its browser |
+| `high_level_overview` | Read official usage guidance and gateway instructions |
+| `penpot_api_info` | Look up Plugin API types and members |
 
-先讀 API 文件，再以明確 handle 操作。高頻讀取或批次修改可用 `save=deferred`，寫入批次結束後 `flush_document`；deferred 成功只表示執行完成。遇到 `EXECUTION_UNKNOWN`／`SAVE_UNCONFIRMED`，先用新 handle 讀回結果，不要直接重送寫入。頁面、暫存、多 Agent 分工及錯誤恢復詳見 [Agent 指引](docs/agent-guide.md)。
+Open a document, read the relevant API guidance, inspect the design, then make focused edits. `execute_code` defaults to `save="wait"`. For frequent reads or batched writes, `save="deferred"` avoids waiting for save confirmation on every call; finish writes with `flush_document`. A deferred reply confirms execution, not persistence.
 
-| 限制 | 預設／行為 |
-|---|---|
-| 常駐瀏覽器 | `PENPOT_MAX_WORKERS=2`，可設 1–16；容量不足時確認儲存後回收閒置 worker |
-| 接受中的操作 | 每檔 32、全域 128；超量回 `BUSY` |
-| Handles | 全域最多 128；重啟 Gateway 後失效 |
-| 閒置回收 | 10 分鐘，保留 handles 供重新開檔 |
-| 請求大小 | JavaScript 100,000 字元、HTTP body 1 MB；回傳另受上游限制 |
+For multi-agent work, put dependent read/compute/write steps in one `execute_code` call. Scheduling protects individual calls, not an entire agent workflow or a transaction. It does not lock human editors or other gateways. On `EXECUTION_UNKNOWN` or `SAVE_UNCONFIRMED`, open a fresh handle and read back before deciding what to do; do not blindly replay writes. See the [agent guide](docs/agent-guide.md).
 
-序列化以單次工具呼叫為單位，不提供跨呼叫交易，也不鎖住人類或其他 Gateway 的編輯。Plugin API 已轉送，但不代表每個方法都逐一驗證；官方部署沒有獨立 `import_image` 工具，圖片可透過 Plugin media API 匯入。
+## Current scope
 
-## 開發、測試與停止
+- One logged-in user and one Penpot site per gateway. Supported inputs are **workspace URLs**; viewer/share links and access to other sites are not supported.
+- A valid browser session is required. Automatic SSO/MFA login and multi-tenant isolation are not implemented; an existing authorized Playwright `storageState` can be supplied as `.state/session.json`.
+- Per gateway: up to 128 handles and 128 accepted operations, with 32 operations per file. A full operation queue returns `BUSY`; JavaScript is limited to 100,000 characters and HTTP request bodies to 1 MB.
+- The gateway forwards Plugin API operations within the deployed plugin's permissions. This does not mean every API method has been verified. Editing currently uses Chromium; direct backend API access is a future extension.
+
+## Development and documentation
 
 ```bash
 npm ci
-npm run browser:install
-npm run init
-npm run auth -- --base-url https://penpot.example.com
-docker compose -f compose.dev.yaml up -d
-npm run build
 npm run check && npm test
-npm run dev -- --stdio
+npm run build
 ```
 
-原生 Node 不會隱式載入 `.env`，請使用 shell 環境或 `node --env-file=.env dist/main.js`；Compose 會載入 `.env`。原生 HTTP 開發可用 `npm run dev -- --http`，預設 `127.0.0.1:3000`。
+The detailed guides are currently in Traditional Chinese:
 
-停止正式服務使用 `docker compose down`。Gateway 處理 SIGINT／SIGTERM／SIGHUP 時會先完成已接受工作與儲存，失敗則保留 HTTP 恢復入口並每 5 秒重試。Compose 預設等待 5 分鐘，可用 `GATEWAY_STOP_GRACE_PERIOD` 調整；外部強制終止仍可能中斷工作。
-
-- [Agent 指引](docs/agent-guide.md)：頁面、批次儲存、多 Agent 與錯誤處理。
-- [架構與診斷](docs/architecture.md)：排程、持久化、紀錄及方案 C 邊界。
-- [測試指南](docs/testing.md)：必要回歸、隔離 fixture、內網驗收與覆蓋範圍。
-- [效能摘要](docs/performance.md)：可重現量測、記憶體與適用限制。
-
-Gateway 新增工具後，MCP client 需重新探索工具清單；既有對話若保留舊清單，請重新連線或開新對話。
+- [Agent guide](docs/agent-guide.md): pages, batching, collaboration, and recovery.
+- [Architecture and diagnostics](docs/architecture.md): routing, persistence, logs, and extension points.
+- [Testing](docs/testing.md): isolated fixtures, real-instance acceptance, and coverage boundaries.
+- [Performance](docs/performance.md): read/write overhead, concurrency, and resource measurements.
