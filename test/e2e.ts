@@ -1,22 +1,17 @@
 import assert from 'node:assert/strict';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { loadFixture, data, writeReport } from './support.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 
-// Explicit fixture manifest only: never discover or edit arbitrary user designs.
-const path = process.env.E2E_TARGETS_FILE;
-if (!path) throw new Error('Set E2E_TARGETS_FILE to a fixture manifest containing base and two dedicated test files.');
-const targets = JSON.parse(await readFile(path, 'utf8'));
-assert.equal(targets.files.length, 2);
-assert(targets.files.every((f: {name: string}) => f.name.startsWith('Headless acceptance ')));
+const { targets, config } = await loadFixture();
 const client = new Client({ name: 'headless-acceptance', version: '1.0.0' });
 const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
 const transport = process.env.E2E_HTTP_URL
   ? new StreamableHTTPClientTransport(new URL(process.env.E2E_HTTP_URL), { requestInit: { headers: { Authorization: `Bearer ${(await readFile(process.env.GATEWAY_TOKEN_FILE || '.state/gateway-token', 'utf8')).trim()}` } } })
-  : new StdioClientTransport({ command: process.execPath, args: ['dist/main.js'], env: { ...env, PENPOT_BASE_URL: targets.base }, stderr: 'inherit' });
+  : new StdioClientTransport({ command: process.execPath, args: ['dist/main.js'], env: { ...env, PENPOT_BASE_URL: targets.base, PENPOT_STORAGE_STATE: config.storageState, PENPOT_DIAGNOSTICS: env.PENPOT_DIAGNOSTICS || 'false' }, stderr: 'inherit' });
 await client.connect(transport);
 const evidence: Record<string, unknown> = { at: new Date().toISOString(), site: targets.base, transport: process.env.E2E_HTTP_URL ? 'http' : 'stdio', display: process.env.DISPLAY || null, checks: [] };
 const handles = new Set<string>();
@@ -28,7 +23,6 @@ async function call(name: string, args: Record<string, unknown>) {
   if (name === 'close_document') handles.delete(String(args.documentHandle));
   return result;
 }
-function data(result: { content: any[] }) { return JSON.parse(result.content.find(c => c.type === 'text').text); }
 try {
   const listed = await client.listTools();
   assert(listed.tools.some(t => t.name === 'open_document')); check('MCP initialization and tools/list');
@@ -63,7 +57,6 @@ try {
     catch { cleanupFailed = true; evidence.status = 'failed'; }
   }
   await client.close();
-  await mkdir('test-results', { recursive: true });
-  await writeFile(resolve('test-results', process.env.E2E_REPORT || 'acceptance.json'), JSON.stringify(evidence, null, 2));
+  await writeReport(process.env.E2E_REPORT || 'acceptance.json', evidence);
   if (cleanupFailed) throw new Error('Unable to release an acceptance-test document handle.');
 }

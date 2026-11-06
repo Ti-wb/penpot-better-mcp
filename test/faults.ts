@@ -1,31 +1,20 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { mock } from 'node:test';
-import type { Browser } from 'playwright';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { Browser, LaunchOptions } from 'playwright';
 import { HeadlessAdapter } from '../src/headless-adapter.js';
 import { DocumentWorker } from '../src/document-worker.js';
 import { Gateway } from '../src/gateway.js';
-import { loadConfig } from '../src/config.js';
+import { loadFixture, data, writeReport } from './support.js';
 import { GatewayError } from '../src/errors.js';
 
-// Fault injection stays on the disposable loopback fixture. The optional
-// Compose `faults` profile supplies a sidecar whose own timeout is 2 seconds.
-const targets = JSON.parse(await readFile('.state/latest-targets.json', 'utf8'));
-assert.equal(targets.base, 'http://127.0.0.1:19001');
-assert(targets.files.every((file: {name: string}) => file.name.startsWith('Headless acceptance ')));
-process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve('.runtime/browsers');
+// The Compose faults profile supplies a sidecar with its own 2-second timeout.
+const { targets, config } = await loadFixture({ localOnly: true });
 const { chromium } = await import('playwright');
-const config = loadConfig({...process.env, PENPOT_BASE_URL: targets.base, PENPOT_STORAGE_STATE: '.state/latest-session.json'});
 const checks: string[] = [];
 const check = (name: string) => { checks.push(name); console.log('PASS', name); };
-function data(result: CallToolResult) {
-  assert(!result.isError, JSON.stringify(result.content));
-  const text = result.content.find(c => c.type === 'text'); assert(text?.type === 'text');
-  return JSON.parse(text.text);
-}
 const errorCode = (code: string) => (error: unknown) => error instanceof GatewayError && error.code === code;
 const count = (name: string) => `return penpotUtils.findShapes(s=>s.name===${JSON.stringify(name)}).length;`;
 const create = (name: string) => `const s=penpot.createRectangle();s.name=${JSON.stringify(name)};return s.id;`;
@@ -38,7 +27,7 @@ async function initialization() {
   const gateway = new DocumentWorker(adapter, config.baseUrl);
   const browsers: Browser[] = [];
   const launch = chromium.launch.bind(chromium);
-  const spy = mock.method(chromium, 'launch', async options => {
+  const spy = mock.method(chromium, 'launch', async (options?: LaunchOptions) => {
     const browser = await launch(options); browsers.push(browser); return browser;
   });
   try {
@@ -148,8 +137,9 @@ async function browserLoss(loss: 'browser' | 'page', capacity = 2) {
   }
 }
 
-async function upstreamTimeout() {
-  const adapter = new HeadlessAdapter({...config, upstreamHttp:'http://127.0.0.1:14411/mcp', upstreamWs:'ws://127.0.0.1:14412', timeoutMs:30_000});
+async function upstreamTimeout(source: 'sdk' | 'sidecar') {
+  const adapter = new HeadlessAdapter(source === 'sdk' ? {...config, timeoutMs:2000}
+    : {...config, upstreamHttp:'http://127.0.0.1:14411/mcp', upstreamWs:'ws://127.0.0.1:14412', timeoutMs:30_000});
   const otherAdapter = new HeadlessAdapter(config);
   const gateway = new Gateway(file => file === targets.files[0].id ? adapter : otherAdapter, config.baseUrl);
   const marker = `lifecycle-timeout-${randomUUID()}`;
@@ -172,25 +162,38 @@ async function upstreamTimeout() {
     assert.equal(results[2].status, 'fulfilled');
     if (results[2].status === 'fulfilled') assert.equal(data(results[2].value).result, targets.files[1].id);
     assert.equal(otherAdapter['browser'], otherBrowser); assert(otherBrowser!.isConnected());
+    const inspected = await gateway.inspect(opened.documentHandle);
+    assert.equal(inspected._meta?.saveState, 'unknown');
+    await assert.rejects(gateway.flush(opened.documentHandle), errorCode('SAVE_UNCONFIRMED'));
     const fresh = await gateway.open(targets.files[0].url); handle=fresh.documentHandle; assert(handle);
     const remaining = 6500 - (Date.now()-start);
     if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
     assert.equal(data(await gateway.execute(handle, count(marker))).result, 0);
     assert.equal(data(await gateway.execute(handle, count(marker+'-queued'))).result, 0);
-    check('sidecar timeout retires only the affected browser before its queue advances; other file stays usable and late/queued edits never execute');
+    check(`${source} timeout retires only the affected browser before its queue advances; other file stays usable and late/queued edits never execute`);
   } finally {
     if (handle) { await gateway.execute(handle, remove(marker)); await gateway.execute(handle, remove(marker+'-queued')); }
     await gateway.shutdown();
   }
 }
 
+async function authentication() {
+  const empty = `.runtime/empty-session-${randomUUID()}.json`;
+  await writeFile(empty, JSON.stringify({ cookies: [], origins: [] }), { mode: 0o600 });
+  const adapter = new HeadlessAdapter({ ...config, storageState: resolve(empty) });
+  const gateway = new DocumentWorker(adapter, config.baseUrl);
+  try {
+    await assert.rejects(gateway.open(targets.files[0].url), errorCode('AUTH_REQUIRED'));
+    check('missing authentication rejects opening without dispatching an edit');
+  } finally { await gateway.shutdown(); await rm(empty, { force: true }); }
+}
+
 let status = 'failed';
 try {
-  await initialization(); await navigation();
+  await initialization(); await navigation(); await authentication();
   await browserLoss('browser'); await browserLoss('page');
   await browserLoss('browser', 1);
-  await upstreamTimeout(); status='passed';
+  await upstreamTimeout('sdk'); await upstreamTimeout('sidecar'); status='passed';
 } finally {
-  await mkdir('test-results', {recursive:true});
-  await writeFile('test-results/lifecycle.json', JSON.stringify({at:new Date().toISOString(),site:targets.base,status,checks},null,2));
+  await writeReport('faults.json', {at:new Date().toISOString(),site:targets.base,status,checks});
 }
