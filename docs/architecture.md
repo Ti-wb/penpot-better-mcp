@@ -1,69 +1,65 @@
-# Architecture
+# 架構與診斷
 
 ```mermaid
 flowchart LR
-  C[Multiple MCP clients] --> G[Gateway / document handles]
-  G --> Q1[File A queue]
-  G --> Q2[File B queue]
-  Q1 --> A[Per-file DesignAdapter / bounded browser pool]
+  C[多個 MCP clients] --> G[Gateway / document handles]
+  G --> Q1[檔案 A 佇列]
+  G --> Q2[檔案 B 佇列]
+  Q1 --> A[每檔 DesignAdapter / 有界 browser pool]
   Q2 --> A
-  A --> U[Private official MCP sidecar]
+  A --> U[私有官方 MCP sidecar]
   U <--> R[WebSocket relay]
-  R <--> P[Official Plugin in headless Chromium]
-  P --> B[Penpot backend as logged-in user]
-  A -. Future structured reads .-> D[Backend API adapter]
-  D -. Per-user backend authorization .-> B
+  R <--> P[Headless Chromium / 官方 Plugin]
+  P --> B[以登入身分存取 Penpot backend]
+  A -. 未來結構化讀取 .-> D[Backend API adapter]
+  D -. 後端授權 .-> B
 ```
 
-## Current adapter
+## 排程與連線
 
-Each file has a distinct adapter, serial queue, browser context and editor. File IDs are the scheduling key, so different page/team URL variants of one file share a queue. Different files execute in parallel, up to `PENPOT_MAX_WORKERS` resident browsers (default 2; range 1–16). The pool reclaims the least recently used idle worker only after confirmed saving, never during a call. Handles and file uncertainty epochs survive eviction; a later call reopens the editor. Failed saves preserve live editors, try other idle victims and return `WORKER_CAPACITY` if no victim is safe. Reclamation runs outside the allocation pump, so another queued file can use a different released slot while one save is slow. Concurrent reclamations are limited to the pending capacity demand. The adapter reports whether it still owns resources: a retired browser frees capacity even if close reports unknown saving, while old handles keep their uncertain epochs. A close on an already evicted file needs no browser slot.
+- 正規化 file ID 是 worker 的索引；同檔不同頁面、team URL 或 UUID 大小寫共用佇列。每檔有獨立 adapter、browser、context、editor 與 MCP 路由 token。
+- Pool 預設保留 2 個 browser。只回收閒置 worker，且須先確認儲存；回收獨立進行，不阻塞其他 slot 分配，也不超出等待需求。`hasResources` 區分「資源仍在」與「舊寫入結果未知」，避免已退出的 browser 繼續占容量。
+- 每檔最多 32、全域最多 128 個接受中的操作，以及 128 個 handles；額度包含開檔中的預留。文件查詢使用不配置 browser 的獨立 adapter。操作指引與限制見 [README](../README.md) 及 [Agent 指引](agent-guide.md)。
+- Playwright 只改送指定站點的 `/mcp/ws`，其餘協作 WebSocket 與後端請求維持 Penpot 原有登入行為。每檔 HTTP client 與 Plugin 使用同一個隨機路由 token，避免替換其他檔案的連線。
+- 官方 sidecar 的 token 用於連線配對，不是使用者授權；sidecar 不公開 HTTP／WebSocket ports。Gateway 的授權邊界是 stdio process 或 bearer token，一組 Gateway 為同一可信任身分，handle 不是額外權限邊界。
 
-Each file accepts at most 32 running/queued operations; the gateway accepts at most 128 operations and 128 handles. Handle reservations include in-flight opens. Empty logical workers are disposed; shutdown drains accepted work. Static API documentation uses a separate adapter with no browser allocation. Closing the last handle for a file releases only its browser; other files remain usable.
+## 儲存、頁面與回收
 
-Serialization covers each tool call, not a multi-call agent workflow or Penpot edits made outside this gateway. Dependent read-modify-write belongs in one awaited script, or requires an explicit precondition. Same-file agents share Plugin storage and should namespace keys and assign shape ownership. Multiple independently started gateway processes do not coordinate file locks; clients needing these guarantees must share one HTTP endpoint.
+`execute_code` 把檔案／頁面檢查放在同一次腳本派送，不增加暖路徑 RPC；匯出另行檢查。`open_page` 與交替使用既有頁面 handles 透過 Plugin 切頁，保留 editor。程式自行導航後，下一次錯誤 target 的腳本會在執行前被拒絕。
 
-The browser loads the real Penpot application and its bundled MCP Plugin. Playwright routes only the configured site's `/mcp/ws` socket to a dedicated official MCP server. The relay uses a random in-memory routing token, shared with that file worker's upstream HTTP client. Different file workers use distinct routing tokens, preventing official Plugin connections from replacing each other. The user's original MCP token is not forwarded to the sidecar. Collaboration sockets and backend calls retain their normal authenticated Penpot behavior.
+預設 `save=wait` 等待 saved 指示穩定 750 ms，並確認沒有未完成或失敗的 `update-file` 請求，避免讀到 debounce 前的舊 saved 狀態。`deferred` 回傳 `_meta.saveState=not_confirmed`，由批次末端 flush 確認；成功 barrier 可沿用，直到下一次執行或儲存請求使它失效。這不是跨系統交易保證。
 
-This relies on the current official MCP server using tokens for connection matching. It is a private sidecar, not an authorization service: never expose its HTTP or WebSocket ports publicly. The public gateway boundary is stdio process ownership or the gateway bearer token. One gateway is one trusted principal; a guessed document handle is not a separate permission boundary.
+正常切頁、close 與回收都先確認儲存。活躍 editor 儲存未確認時保留資源；已遺失的 editor 則釋放資源並仍回 `SAVE_UNCONFIRMED`。未確認工作遭 browser／page 遺失或逾時時，檔案 epoch 前進，舊 handles 禁止執行與 flush；inspect 標記 unknown，新 handle 供讀回核對，但不清除舊 handle 的未知狀態。派送過的程式碼不自動重送，逾時會先終止原 browser，避免延遲腳本繼續修改。
 
-Authentication uses an interactive terminal with masked password entry and the Penpot password-login endpoint. Only Playwright storageState is persisted, with mode 0600. Session files are credentials. They are not logged, committed or copied into images. SSO/MFA session acquisition and refresh are not implemented.
+初始化／導航失敗回收不完整資源；handle 資料於開檔失敗、明確關閉與 shutdown 釋放。閒置回收失敗會在下一個閒置週期重檢。關機由 Gateway 統一處理訊號，停用 Playwright 的提前關閉行為；排空已接受工作與儲存後才關傳輸，失敗保留恢復入口，每 5 秒重試。正常退出等待輸出完成，Compose 關機等待預設 5 分鐘。
 
-The adapter verifies file/page identity before dispatch. Warm `execute_code` calls use the identity guard in the same dispatched script, removing a redundant round trip. Exports still verify context separately. Penpot remains responsible for user/file permissions. Share-link access must use a future restricted read adapter; it is deliberately rejected in the editor path. Local browser JavaScript, especially arbitrary `execute_code`, is trusted as a user-authorized operation rather than sandboxed against that same user.
+官方 Plugin 會把執行結果寫入 Chromium console；每次收到結果後用 `Runtime.discardConsoleEntries` 釋放 inspector 參照，保留 MCP 回傳日誌與 Plugin storage，正常運行不強制 GC。HTTP 沒有持久化 client session，handles 只存在於目前 Gateway process。
 
-`open_page(handle, pageId)` creates a new immutable page-bound handle in the same file. It flushes pending saves and navigates through the existing Plugin without reloading the editor; other handles retain their original targets. Alternating existing page-bound handles also selects the page without reloading the editor. Raw navigation inside user code can still change the editor. The inline guard then returns `DOCUMENT_CONTEXT_CHANGED` with expected/actual IDs and recovery guidance before executing the next user script. Its per-call marker avoids confusing ordinary returned data with a gateway failure and adds no warm-path RPC.
+## 診斷紀錄
 
-## Recovery and persistence
+預設每次操作在 stderr 輸出一行 JSON，stdio stdout 保留給 MCP；`PENPOT_DIAGNOSTICS=false` 停用一般紀錄。Compose 使用 Docker `local` driver，單檔 10 MB、最多 3 檔；原生程序的輪替由啟動端管理。紀錄不含 URL、文件／頁面 ID、handle、程式碼、結果內容、帳號或憑證。
 
-- The adapter does not retry dispatched code. Lost responses cause browser teardown and `EXECUTION_UNKNOWN`.
-- Official sidecar task timeouts can arrive inside a normal JSON-RPC tool response. They also cause teardown and `EXECUTION_UNKNOWN`; the queue advances only after the old browser has exited, so its code cannot continue behind subsequent calls.
-- The default `save=wait` requires editor saved status to remain stable for 750 ms after execution, including a returned tool error, with no unfinished or failed `update-file` request. This exceeds the released editor's 200 ms pending-status debounce; checking once can observe the previous saved state and discard a fresh edit when switching files. This remains a version-sensitive integration, not an atomic commit guarantee.
-- `save=deferred` returns execution acknowledgment immediately, with `_meta.saveState=not_confirmed`. A serialized `flush_document` waits for persistence after the batch. This mode also avoids unnecessary persistence waits on reads; it is not a read-only sandbox. Both modes retain the same identity guard and queue.
-- A successful barrier is reused until another execution/save request invalidates it. Normal close does not add another fixed wait after an already confirmed write.
-- Normal close and idle reclamation also await saving. An unconfirmed save retains a live editor. An already lost editor is reclaimed while close still reports `SAVE_UNCONFIRMED`; old handles retain their uncertain status. A transport timeout forcibly closes the browser to stop code with an unknown execution state; a failed script may have partially edited the file.
-- A failed idle reclamation schedules another check at the next idle interval, without replaying code. Accepted operations cancel idle timers and serialize behind any reclamation already in progress. Shutdown stops scheduling new idle checks and rejects new operations while draining. Gateway handles SIGINT, SIGTERM and SIGHUP; Playwright's automatic signal handling is disabled so it cannot close browsers ahead of the drain. The process closes its transport only after successful shutdown; a failed save retains recovery access and retries after five seconds. Normal completion lets pending transport output flush instead of calling process.exit. Compose supplies a configurable five-minute grace period; external force-kill remains outside this guarantee.
-- Reopening and reading back a known object is the acceptance check for persistence.
-- Browser session expiry requires a new login. MCP connection polling retries only the fixed read-only identity query. Toolbar UI may remount while loading; actual plugin identity determines readiness. Previous page relay sockets are retired before connecting the next file.
-- Browser/context initialization publishes resources only after setup succeeds. Failed context or relay setup closes the new browser; failed page navigation or plugin setup tears down the incomplete editor, allowing the next open to retry normally.
-- Save observation belongs to one editor instance. Browser/page loss with unconfirmed work advances the file's epoch. Existing handles for that file retain the old epoch and cannot execute or flush; inspection reports `saveState=unknown`. A fresh `open_document` binds to the current epoch for readback and reconciliation, without rehabilitating old handles. Other files retain their handles. These local checks add no upstream requests to warm execution.
-- Handle bookkeeping is released on failed opens, explicit close and gateway shutdown. File epochs are retained only while handles or the active editor reference them.
-- Plain-text official tool failures are normalized to MCP `isError=true` without changing successful user results.
-- The official plugin logs result objects to Chromium's console. After receiving a tool result, the adapter drops inspector console references to avoid retaining large object graphs. It does not clear plugin storage or returned MCP logs, and does not force garbage collection in normal operation.
-- The HTTP transport has no durable per-client MCP session; document handles live in this single gateway process and expire on restart.
+| `event=request` 欄位 | 意義 |
+|---|---|
+| `requestId`、`workerId` | 隨機請求／worker 識別碼，用於關聯操作，非文件 ID |
+| `operation`、`outcome`、`errorCode` | 操作、結果、安全錯誤類別；不記錄原始例外 |
+| `queueMs`、`queuedAhead` | 同檔佇列的等待時間與抵達時待完成數量 |
+| `workerWaitMs` | 等待 browser pool 容量／回收 |
+| `activationMs` | 初始化與切頁，扣除其中的上游、儲存與清理 |
+| `upstreamMs`、`upstreamCalls` | MCP 往返時間／次數，包含序列化、網路與 Plugin 執行 |
+| `saveMs`、`cleanupMs` | 儲存等待、資源清理；清理時間不重複計入儲存 |
+| `totalMs` | 含排隊的總時間，不含前端 HTTP 傳輸或 Agent 思考時間 |
+| `responseContentBytes` | content 文字／base64 的 UTF-8 大小，不是完整網路流量 |
+| `connectionProbeRetries` | 唯讀連線探測重試數，不是寫入重試 |
 
-## Extension to scheme C
+各階段不重複計時。`BUSY` 在排隊前記錄拒絕；HTTP 授權／schema 錯誤不在 Gateway 操作紀錄內。`browser_started`、`editor_ready`、`page_selected`、`editor_lost`、`browser_closed` 記錄生命週期與 Node RSS（不含 Chromium）。回收操作分為 `idle_reclaim`／`worker_eviction`；只有非預期中斷標記 editor 遺失。
 
-`DesignAdapter` in `src/adapter.ts` owns document/page opening, execution, persistence, export, documentation, handle release and close operations, without exporting Playwright types. `flushPending()` confirms active work without activating a different target, and retires an already lost worker while preserving any uncertain outcome. `hasResources` reports whether resources remain owned even after a failed close, without exposing browser types. `release(target)` only discards handle bookkeeping after its target is no longer reachable through the gateway. Introduce a separate backend read adapter for normalized document/page/shape queries and a router deciding which operation needs an editor. Do not expose arbitrary backend RPC or database writes as a shortcut.
+關機失敗固定輸出 `shutdown_failed`、`errorCode`、`retryMs`，即使一般紀錄停用也保留。暖機讀取／大型回覆的紀錄開關對照由 `test:diagnostics` 量測；結果見 [效能摘要](performance.md)。
 
-For the hybrid phase, add explicit read operations, backend credentials separate from MCP routing tokens, versioned response normalization, revision-aware cache keys, permission revalidation and invalidation after browser writes. Keep full Plugin execution and rendering in the existing adapter until backend equivalents are verified.
+## 授權與方案 C
 
-Multi-user hosting also needs authenticated principal-to-worker mapping, isolated session storage, quotas and independent queues. The current bearer token must not be treated as an identity federation mechanism.
+終端登入只保存 mode 0600 的 Playwright storageState；這是憑證，不放入 Git、映像或日誌。Session 取得與更新目前不含 SSO/MFA。任意 JavaScript 屬使用者授權的可信任操作，沒有對同一身分提供沙箱隔離；分享連結不能經 editor 路徑升級權限。
 
-## Upstream reference
+`DesignAdapter` 封裝開檔、執行、儲存、匯出與回收，不暴露 Playwright 型別。方案 C 可加入結構化後端 read adapter，由 router 選擇 API 或 editor；需要獨立後端授權、版本化資料格式、revision cache、寫入後失效處理與權限重驗。多使用者服務另需 principal-to-worker 對應、session 隔離與配額，不能把目前的 bearer token 當成身分聯邦。
 
-- [Official MCP architecture](https://github.com/penpot/penpot/tree/develop/mcp)
-- [MCP connection and token behavior](https://github.com/penpot/penpot/blob/1a80e98e623f962fe91c9971a5c2bc8617677a4b/mcp/packages/server/src/McpAuthentication.ts)
-- [Official connection instructions](https://help.penpot.app/mcp/)
-- [Released persistence pipeline and debounce](https://github.com/penpot/penpot/blob/2.18.5/frontend/src/app/main/data/persistence.cljs)
-
-The browser toolbar and socket path are version integration points. The tested released runtime uses hash workspace URLs; alternate query links normalize to that route. The newer develop management API is not required by this implementation.
+官方參考：[MCP 架構](https://github.com/penpot/penpot/tree/develop/mcp)、[連接說明](https://help.penpot.app/mcp/)、[token 配對](https://github.com/penpot/penpot/blob/1a80e98e623f962fe91c9971a5c2bc8617677a4b/mcp/packages/server/src/McpAuthentication.ts)、[儲存 debounce](https://github.com/penpot/penpot/blob/2.18.5/frontend/src/app/main/data/persistence.cljs)。Toolbar、socket 路徑與儲存指示器是版本相依處，升級後需重跑 [測試指南](testing.md) 的真實驗收。

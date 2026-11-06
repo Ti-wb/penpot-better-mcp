@@ -31,6 +31,6 @@ MCP 初始化與 `high_level_overview` 都提供相同核心指引。以下為�
 | `WORKER_CAPACITY` | 其他檔案無法確認儲存，無法安全回收；先處理那些檔案的儲存狀態，新呼叫的設計程式尚未執行 |
 | `BUSY` | 等待已有操作完成，再降低併發；每檔超過 32 筆或全域超過 128 筆接受中的操作會拒絕 |
 
-API 文件不是權限清單。本次內網 2.18.5 及最新映像 2.18.6 的內建 MCP Plugin，實測 `activeUsers` 都回報缺少 `user:read`。不要因外掛 manifest 或原始碼列出權限，就宣稱部署已授予。一般設計不需要讀取使用者名單，請省略 `currentUser`／`activeUsers` 探測。Proxy 不替外掛擴權，檔案存取仍由登入帳號與 Penpot 決定。升級後應重跑 `npm run test:guidance`；若權限能力改變，測試會要求更新指引。
+API 文件不是權限清單。已驗證的內網 2.18.5 及隔離映像 2.18.6 的內建 MCP Plugin，實測 `activeUsers` 都回報缺少 `user:read`。不要因外掛 manifest 或原始碼列出權限，就宣稱部署已授予。一般設計不需要讀取使用者名單，請省略 `currentUser`／`activeUsers` 探測。Proxy 不替外掛擴權，檔案存取仍由登入帳號與 Penpot 決定。升級後應重跑 `npm run test:editor`；若權限能力改變，測試會要求更新指引。
 
 任意 JavaScript 不是交易，工具失敗也可能已有部分修改。執行較短、目的單一的片段，將建立結果 ID 留在呼叫端，先檢查再重試。此 worker 是一個帳號的可信任工作環境，尚未提供多租戶隔離或方案 C 的直接後端讀寫。
