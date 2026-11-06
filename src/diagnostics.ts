@@ -2,11 +2,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { GatewayError } from './errors.js';
 
-export type Operation = 'open_document' | 'open_page' | 'inspect_document' | 'execute_code' | 'flush_document' | 'export_shape' | 'close_document' | 'high_level_overview' | 'penpot_api_info' | 'idle_reclaim' | 'worker_eviction' | 'shutdown';
-type Phase = 'activationMs' | 'upstreamMs' | 'saveMs' | 'cleanupMs' | 'workerWaitMs';
+export type Operation = 'read_document' | 'open_document' | 'open_page' | 'inspect_document' | 'execute_code' | 'flush_document' | 'export_shape' | 'close_document' | 'high_level_overview' | 'penpot_api_info' | 'idle_reclaim' | 'worker_eviction' | 'shutdown';
+type Phase = 'activationMs' | 'upstreamMs' | 'saveMs' | 'cleanupMs' | 'workerWaitMs' | 'backendMs';
 type Lifecycle = 'browser_started' | 'browser_closed' | 'editor_ready' | 'editor_lost' | 'page_selected';
 type RecordSink = (record: Record<string, unknown>) => void;
-interface Timing { activationMs: number; upstreamMs: number; saveMs: number; cleanupMs: number; workerWaitMs: number; upstreamCalls: number; connectionProbeRetries: number; }
+interface Timing { activationMs: number; upstreamMs: number; saveMs: number; cleanupMs: number; workerWaitMs: number; backendMs: number; backendCalls: number; cacheRevalidations: number; upstreamCalls: number; connectionProbeRetries: number; }
 interface Scope { requestId: string; operation: Operation; workerId?: string; timing: Timing; phase?: Phase; live: { value: boolean }; }
 
 function toolResult(value: unknown): { isError?: unknown; content?: unknown } | undefined {
@@ -41,7 +41,7 @@ export class Diagnostics {
   async run<T>(operation: Operation, queuedAt: number, queuedAhead: number, task: () => Promise<T>, workerId?: string): Promise<T> {
     if (!this.sink) return task();
     const started = performance.now();
-    const scope: Scope = { requestId: randomUUID(), operation, workerId, live: { value: true }, timing: { activationMs: 0, upstreamMs: 0, saveMs: 0, cleanupMs: 0, workerWaitMs: 0, upstreamCalls: 0, connectionProbeRetries: 0 } };
+    const scope: Scope = { requestId: randomUUID(), operation, workerId, live: { value: true }, timing: { activationMs: 0, upstreamMs: 0, saveMs: 0, cleanupMs: 0, workerWaitMs: 0, backendMs: 0, backendCalls: 0, cacheRevalidations: 0, upstreamCalls: 0, connectionProbeRetries: 0 } };
     return this.context.run(scope, async () => {
       let value: T | undefined, errorCode: string | undefined;
       try { value = await task(); errorCode = resultError(toolResult(value)); return value; }
@@ -70,7 +70,7 @@ export class Diagnostics {
       if (scope.phase) scope.timing[scope.phase] -= duration;
     }
   }
-  count(name: 'upstreamCalls' | 'connectionProbeRetries') {
+  count(name: 'upstreamCalls' | 'connectionProbeRetries' | 'backendCalls' | 'cacheRevalidations') {
     const scope = this.sink ? this.context.getStore() : undefined;
     if (scope?.live.value) scope.timing[name]++;
   }

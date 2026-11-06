@@ -8,10 +8,11 @@
 
 | 指令 | 覆蓋與執行時機 |
 |---|---|
-| `npm run check && npm test` | 型別與 28 項單元／HTTP 回歸；日常修改，不需 Penpot |
+| `npm run check && npm test` | 型別與單元／HTTP 回歸；日常修改，不需 Penpot |
 | `npm run test:acceptance` | 建置、stdio／HTTP、PNG、持久化與四 client 同檔／跨檔；路由修改或發佈前 |
 | `npm run test:editor` | 批次儲存、SVG／PNG fill、頁面與 Plugin 錯誤；adapter 修改或 Penpot 升級，限隔離 fixture |
 | `npm run test:faults` | 啟動／導航／認證、SDK／sidecar timeout、browser／page 遺失、容量與關機；生命週期修改，限隔離 fixture |
+| `npm run test:reads` | 無瀏覽器 HTTP、ETag 驗證、已儲存資料一致性、3,000 圖形對照與記憶體；後端讀取變更 |
 | `npm run test:load` | 每檔 3,000 圖形、直連／Proxy 比較、併發讀取、過載與連續掃描；效能修改 |
 | `npm run test:reclamation` | 單檔 3,000 圖形的連續讀寫、切頁、明確／閒置回收與程序資源；資源生命週期修改 |
 | `npm run test:diagnostics` | ABBA 紀錄開關對照，暖讀與 1 MiB 回覆；紀錄功能修改 |

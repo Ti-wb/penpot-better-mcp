@@ -19,11 +19,11 @@ Penpot Better MCP 在官方 Penpot MCP 之上，加入自動開檔與切檔、�
 | 多 Agent 作業 | MCP 使用作用中分頁的操作情境 | 不同檔案真正平行；同檔案的呼叫依序執行，包含不同頁面 |
 | 在 Linux VM 運作 | 自行安排瀏覽器與 Plugin 工作階段 | 使用附帶的 Docker 設定，不需要桌面或 `DISPLAY` |
 
-操作仍透過官方 MCP 與 Plugin API 執行，存取權限由已登入的 Penpot 帳號決定。底層協定與工具可參考[官方專案](https://github.com/penpot/penpot/tree/develop/mcp)。
+編輯與渲染透過官方 MCP 與 Plugin API 執行；`read_document` MVP 使用同一登入帳號直接向後端讀取已儲存資料。底層協定與工具可參考[官方專案](https://github.com/penpot/penpot/tree/develop/mcp)。
 
 ## 主機資源需求
 
-**執行這支程式的電腦會自動啟動 headless Chromium。** 主機需要負擔完整 Penpot 編輯器的 CPU 與記憶體用量。大型檔案、圖片及更多同時開啟的檔案都會增加資源需求；瀏覽器池限制的是數量，並不限制每個編輯器的記憶體。
+**編輯與渲染時，Gateway 主機會自動啟動 headless Chromium。** 單純呼叫 `read_document` 不啟動瀏覽器。 主機需要負擔完整 Penpot 編輯器的 CPU 與記憶體用量。大型檔案、圖片及更多同時開啟的檔案都會增加資源需求；瀏覽器池限制的是數量，並不限制每個編輯器的記憶體。
 
 請為實際開啟的檔案預留 CPU 與記憶體餘裕，規劃主機容量前先量測自己的負載。
 
@@ -100,6 +100,7 @@ docker compose up -d --force-recreate gateway
 
 | 工具 | 用途 |
 |---|---|
+| `read_document` | 透過 HTTP 讀取已儲存的檔案／頁面摘要與指定圖形欄位，不需瀏覽器或 handle |
 | `open_document` | 開啟 workspace URL，取得 `documentHandle` |
 | `inspect_document` | 查看文件資訊與恢復狀態 |
 | `open_page` | 取得另一頁的新 handle，舊 handle 仍綁定原本頁面 |
@@ -110,7 +111,7 @@ docker compose up -d --force-recreate gateway
 | `high_level_overview` | 讀取官方操作概覽與 Gateway 指引 |
 | `penpot_api_info` | 查詢 Plugin API 型別與成員文件 |
 
-先開啟文件、閱讀相關 API 指引並查看現有設計，再進行範圍明確的修改。`execute_code` 預設 `save="wait"`。高頻讀取或批次寫入可用 `save="deferred"`，省去逐次等待儲存確認的時間，寫入批次結束時再呼叫 `flush_document`。Deferred 回覆只表示執行完成，不代表已儲存。
+只需已儲存資料時，先用 `read_document({url})`；分批讀取與欄位選取見[無瀏覽器讀取指南](docs/browserless-reads.zh-TW.md)。編輯時再開啟文件、閱讀 API 指引並查看現有設計。`execute_code` 預設 `save="wait"`。高頻讀取或批次寫入可用 `save="deferred"`，省去逐次等待儲存確認的時間，寫入批次結束時再呼叫 `flush_document`。Deferred 回覆只表示執行完成，不代表已儲存。
 
 多 Agent 作業時，將彼此相依的「讀取、計算、寫入」放在同一次 `execute_code`。排程保護的是單次呼叫，不是整段 Agent 工作流程，也不提供交易保證；人類或其他 Gateway 的編輯不受這條佇列保護。遇到 `EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED`，先用新 handle 讀回確認，再決定後續處理，不要直接重送寫入。詳見 [Agent 指引](docs/agent-guide.zh-TW.md)。
 
@@ -119,11 +120,11 @@ docker compose up -d --force-recreate gateway
 - 每個 Gateway 對應一位已登入使用者與一個 Penpot 站點。支援 **workspace URL**，尚未支援 viewer／分享連結或跨站存取。
 - 需要有效的瀏覽器 session，尚未實作 SSO/MFA 自動登入與多租戶隔離；可將既有且已授權的 Playwright `storageState` 放在 `.state/session.json`。
 - 每個 Gateway 最多 128 個 handles、128 個接受中的操作，每檔上限 32 個操作。操作佇列已滿時回覆 `BUSY`；JavaScript 上限 100,000 字元，HTTP request body 上限 1 MB。
-- Gateway 在已部署 Plugin 的權限範圍內轉送 API 操作，不代表每個 API 方法均經驗證。目前編輯仍透過 Chromium，直接存取後端 API 是後續擴充方向。
+- Gateway 在已部署 Plugin 的權限範圍內轉送 API 操作，不代表每個 API 方法均經驗證。編輯使用 Chromium；`read_document` 回傳已儲存的後端 JSON，不包含 Plugin 即時計算狀態或渲染圖片。
 
 ## Roadmap／未來規劃
 
-- [ ] 更低成本、更快速的大量讀取，不依靠瀏覽器。
+- [ ] 更低成本、更快速的大量讀取，不依靠瀏覽器——已提供[結構化讀取 MVP](docs/browserless-reads.zh-TW.md)，後續再改善後端局部抓取。
 - [ ] 更低成本、更快速的大量寫入。
 
 ## 開發與文件

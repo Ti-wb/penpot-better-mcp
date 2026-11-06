@@ -23,7 +23,8 @@
     "auth": "tsx src/auth-cli.ts",
     "init": "node scripts/init-state.mjs",
     "browser:install": "PLAYWRIGHT_BROWSERS_PATH=.runtime/browsers playwright install chromium",
-    "fixture:setup": "tsx test/setup-fixture.ts"
+    "fixture:setup": "tsx test/setup-fixture.ts",
+    "test:reads": "tsx test/browserless.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

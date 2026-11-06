@@ -8,10 +8,11 @@ Run fast checks first, then select integration tests for the changed behavior. L
 
 | Command | Coverage and when to run |
 |---|---|
-| `npm run check && npm test` | Types and 28 unit/HTTP regressions; routine changes, no Penpot required |
+| `npm run check && npm test` | Types and unit/HTTP regressions; routine changes, no Penpot required |
 | `npm run test:acceptance` | Build, stdio/HTTP, PNG, persistence, and four clients sharing one or multiple files; routing changes or releases |
 | `npm run test:editor` | Deferred saves, SVG/PNG fill, pages, and Plugin errors; adapter changes or Penpot upgrades, isolated fixture only |
 | `npm run test:faults` | Startup/navigation/authentication, SDK/sidecar timeouts, browser/page loss, capacity, and shutdown; lifecycle changes, isolated fixture only |
+| `npm run test:reads` | Browserless HTTP, ETag validation, saved-data consistency, 3,000-shape comparison and memory; backend-reader changes |
 | `npm run test:load` | 3,000 shapes per file, direct/Proxy comparison, concurrent reads, overload, and repeated scans; performance changes |
 | `npm run test:reclamation` | Repeated reads/writes, page changes, explicit/idle reclamation, and process resources for a 3,000-shape file; resource-lifecycle changes |
 | `npm run test:diagnostics` | ABBA logging on/off comparison for warm reads and 1 MiB responses; logging changes |

@@ -4,6 +4,8 @@
 
 MCP 初始化與 `high_level_overview` 都提供相同核心指引。
 
+只需已儲存摘要或圖形資料時，先用 `read_document({url})`，不需瀏覽器或 handle。以 `view: "shapes"`、`pageId`、`fields`、`limit`／`offset` 選取資料；後續批次帶上回傳的 `snapshotId`，遇到 `SNAPSHOT_CHANGED` 重新開始。詳見[無瀏覽器讀取](browserless-reads.zh-TW.md)。需要編輯或渲染時再使用下列流程。
+
 ## 操作流程
 
 1. 以 `open_document({url})` 取得 handle；用 `inspect_document` 查看頁面清單。Gateway 會自行啟動 headless 編輯器。

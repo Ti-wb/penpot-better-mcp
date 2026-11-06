@@ -13,14 +13,15 @@ flowchart LR
   U <--> R[WebSocket relay]
   R <--> P[Headless Chromium / 官方 Plugin]
   P --> B[Penpot backend / 已登入 session]
-  A -. 未來結構化讀取 .-> D[Backend API adapter]
-  D -. 後端授權 .-> B
+  Q1 --> D[BackendReader / 已儲存 JSON 與 ETag 快取]
+  Q2 --> D
+  D --> B
 ```
 
 ## 排程與連線
 
 - Worker 以正規化 file ID 索引；同檔不同頁面、team URL 或 UUID 大小寫共用佇列。每檔有獨立 adapter、browser、context、editor 與 MCP 路由 token。
-- 瀏覽器池預設容量為兩個，只在確認儲存後回收閒置 worker。接受中的操作上限為每檔 32、全域 128，handles 上限為 128，包含開檔中的預留額度。API 文件查詢不配置瀏覽器。
+- 瀏覽器池預設容量為兩個，只在確認儲存後回收閒置 worker。接受中的操作上限為每檔 32、全域 128，handles 上限為 128，包含開檔中的預留額度。API 文件查詢與 `read_document` 不配置瀏覽器。後端讀取沿用同檔佇列並確認先前寫入已儲存，不佔用新的瀏覽器名額。
 - Playwright 只改送指定站點的 `/mcp/ws`，協作 WebSocket 與後端請求維持 Penpot 原有認證。每檔 HTTP client 與 Plugin 使用相同的隨機路由 token。
 - Sidecar token 用於連線配對，不代表使用者授權；其 ports 不對外公開。Gateway 的 bearer token 或 stdio process 代表同一可信任身分，handle 不提供額外授權邊界。
 
@@ -48,6 +49,7 @@ Adapter 在 Plugin 回傳後用 `Runtime.discardConsoleEntries` 清除 inspector
 | `workerWaitMs` | 等待瀏覽器容量或回收 |
 | `activationMs` | 初始化／切頁，扣除其內部上游、儲存與清理時間 |
 | `upstreamMs`, `upstreamCalls` | MCP 往返時間／次數，含序列化、網路與 Plugin 執行 |
+| `backendMs`, `backendCalls`, `cacheRevalidations` | 後端 HTTP／解碼時間、請求數與驗證成功的 304 次數 |
 | `saveMs`, `cleanupMs` | 儲存確認與資源清理，不重複計算清理時間 |
 | `totalMs` | 包含排隊，不含前端 HTTP 傳輸或 Agent 思考時間 |
 | `responseContentBytes` | content 文字／base64 的 UTF-8 大小，不是完整傳輸大小 |
@@ -61,6 +63,6 @@ Adapter 在 Plugin 回傳後用 `Runtime.discardConsoleEntries` 清除 inspector
 
 登入只保存權限為 `0600` 的 Playwright storageState，不放入 Git、映像或日誌；尚未實作 SSO/MFA 自動更新。JavaScript 是同一帳號下的可信任程式碼，沒有多租戶隔離；viewer 連結不能透過 Gateway 取得編輯權限。
 
-`DesignAdapter` 封裝開檔、執行、儲存、匯出與回收，不暴露 Playwright 型別。未來的後端讀取 adapter 需要獨立後端授權、版本化資料格式、revision cache、寫入後失效處理與權限重驗。支援多使用者還需要身分與 worker 對應、session 隔離及配額。
+`DesignAdapter` 封裝開檔、執行、儲存、匯出與回收，不暴露 Playwright 型別。`BackendReader` 使用符合站點範圍的 session cookies、固定 origin 的 HTTP 請求，每次讀取都以含權限狀態的 ETag 重新驗證。最多快取四份序列化檔案／32 MiB，同時最多兩筆讀取；失敗時不回傳舊快取。[無瀏覽器讀取指南](browserless-reads.zh-TW.md) 說明資料與相容性邊界。支援多使用者還需要身分與 worker 對應、session 隔離及配額。
 
 官方參考：[MCP 架構](https://github.com/penpot/penpot/tree/develop/mcp)、[連接說明](https://help.penpot.app/mcp/)、[token 配對](https://github.com/penpot/penpot/blob/1a80e98e623f962fe91c9971a5c2bc8617677a4b/mcp/packages/server/src/McpAuthentication.ts)、[儲存 debounce](https://github.com/penpot/penpot/blob/2.18.6/frontend/src/app/main/data/persistence.cljs)。Toolbar、socket 路徑與儲存指示器會隨版本變動，升級後請重跑[真實環境驗收](testing.zh-TW.md)。

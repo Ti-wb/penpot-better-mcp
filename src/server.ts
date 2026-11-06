@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { GatewayApi } from './gateway.js';
 import { GatewayError, publicError } from './errors.js';
 import { gatewayInstructions } from './instructions.js';
+import { readOptionsSchema } from './backend-reader.js';
 
 function json(value: unknown): CallToolResult { return { content: [{ type: 'text', text: JSON.stringify(value) }] }; }
 export function createMcpServer(gateway: GatewayApi) {
@@ -14,6 +15,11 @@ export function createMcpServer(gateway: GatewayApi) {
     try { return await fn(args); } catch (error) { return { ...json(publicError(error)), isError: true }; }
   };
   const handle = { documentHandle: z.string().uuid() };
+  if (gateway.read) server.registerTool('read_document', {
+    description: 'Read saved Penpot data directly over HTTP without opening a browser or document handle. Use summary for file/pages/counts, or shapes for paginated raw backend fields (camelCase; frame means Plugin board). pageId defaults to the URL page or first page. Select fields such as content, fills, strokes or layout; id is always included. Reuse snapshotId while paging to detect edits. Waits for earlier writes in this gateway; other editors\' unsaved changes are unavailable. Every call revalidates access with Penpot. SVG/PNG, layout computation and Plugin JavaScript still need browser tools.',
+    inputSchema: { url: z.string().max(4096), ...readOptionsSchema.shape },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, safe(({url, ...options}) => gateway.read!(url, options)));
   server.registerTool('open_document', { description: 'Open an editor file URL in a managed headless browser. Returns a handle bound to the file and to page-id when the URL specifies it. Use open_page to select another page with a new handle.', inputSchema: { url: z.string().max(4096) }, annotations: { readOnlyHint: true, openWorldHint: true } }, safe(async args => {
     const opened = await gateway.open(args.url);
     return { ...json(opened), ...(opened.result.isError ? { isError: true } : {}) };

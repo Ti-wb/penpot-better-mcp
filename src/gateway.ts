@@ -4,8 +4,11 @@ import { parseDocument } from './document.js';
 import { Diagnostics, type Operation } from './diagnostics.js';
 import { GatewayError } from './errors.js';
 import { WorkerPool } from './worker-pool.js';
+import type { ReadOptions, SavedDocumentReader } from './backend-reader.js';
 
-export type GatewayApi = Pick<DocumentWorker, 'open' | 'openPage' | 'inspect' | 'execute' | 'flush' | 'export' | 'documentation' | 'closeDocument' | 'shutdown'>;
+export type GatewayApi = Pick<DocumentWorker, 'open' | 'openPage' | 'inspect' | 'execute' | 'flush' | 'export' | 'documentation' | 'closeDocument' | 'shutdown'> & {
+  read?: (url: string, options?: ReadOptions) => ReturnType<SavedDocumentReader['read']>;
+};
 interface Entry { fileId: string; worker: DocumentWorker; pending: number; disposing?: Promise<void>; }
 
 /** One queue/adapter per file, sharing a bounded warm-browser pool. */
@@ -21,7 +24,8 @@ export class Gateway implements GatewayApi {
   private drained?: () => void;
   private closing?: Promise<void>;
   constructor(private readonly createAdapter: (fileId?: string) => DesignAdapter, private readonly baseUrl: string,
-    private readonly idleMs = 600_000, private readonly diagnostics = new Diagnostics(), maxWorkers = 2) {
+    private readonly idleMs = 600_000, private readonly diagnostics = new Diagnostics(), maxWorkers = 2,
+    private readonly reader?: SavedDocumentReader) {
     this.pool = new WorkerPool(maxWorkers, diagnostics);
   }
   private adapter(fileId?: string) {
@@ -84,6 +88,15 @@ export class Gateway implements GatewayApi {
       return result;
     }));
   }
+  read(url: string, options: ReadOptions = {}) {
+    let target;
+    try {
+      target = parseDocument(url, this.baseUrl);
+      if (!this.reader) throw new GatewayError('READ_UNAVAILABLE', 'The backend reader is not configured.');
+    } catch (error) { return this.reject<Awaited<ReturnType<SavedDocumentReader['read']>>>('read_document', error); }
+    return this.dispatch('read_document', () => this.workers.get(target.fileId) ?? this.create(target.fileId),
+      entry => entry.worker.readSaved(() => this.reader!.read(target, options)));
+  }
   openPage(handle: string, pageId: string) {
     return this.newHandle('open_page', () => this.dispatch('open_page', () => this.target(handle), async entry => {
       const result = await entry.worker.openPage(handle, pageId);
@@ -128,5 +141,6 @@ export class Gateway implements GatewayApi {
     const failure = results.find(result => result.status === 'rejected');
     if (failure?.status === 'rejected') { this.stopping = false; throw failure.reason; }
     this.handles.clear(); this.workers.clear();
+    this.reader?.clear();
   }
 }
