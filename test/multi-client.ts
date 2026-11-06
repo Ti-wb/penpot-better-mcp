@@ -73,7 +73,7 @@ try {
     urls[i]=targetPage(parseDocument(targets.files[i].url,targets.base),roots[i]).url;
   }
   await closeAll();
-  const same=await Promise.all(clients.map((_,i)=>open(i,urls[0])));
+  const same=await Promise.all(clients.map((_,i)=>open(i,!legacy&&i===1 ? urls[0].replace(targets.files[0].id,targets.files[0].id.toUpperCase()) : urls[0])));
   const sameHandles=same.map(d=>d.documentHandle);
   const counter=await execute(0,sameHandles[0],`const s=penpot.createRectangle();s.name=${JSON.stringify(prefix+'same-counter')};s.x=0;return s.id;`);
   const sameRows=await edits(sameHandles,Array(4).fill(counter),4,'same-file',40);
@@ -103,7 +103,7 @@ try {
   assert.equal(parallel,!legacy&&workers>1,'cross-file execution concurrency does not match the selected architecture');
   report.crossFileParallel=parallel;
   await Promise.all([0,1].map(i=>call(i,'flush_document',{documentHandle:mixedHandles[i]})));
-  check(parallel?'different files execute concurrently while each file remains serialized':'baseline confirms different files also wait in the global serial queue');
+  check(parallel?'different files execute concurrently while each file remains serialized':legacy?'baseline confirms different files also wait in the global serial queue':'capacity 1 serializes different files while safely evicting and reopening their workers');
 
   await execute(1,mixedHandles[1],'storage.multiClientKeeper=42;return true;');
   await call(0,'close_document',{documentHandle:mixedHandles[0]});
