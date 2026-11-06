@@ -123,9 +123,11 @@ npm run test:diagnostics
 npm run test:guidance
 npm run test:reclamation
 E2E_TARGETS_FILE=.state/latest-targets.json PENPOT_STORAGE_STATE=.state/latest-session.json npm run test:multi
-# 四項審查問題的故障回歸（需要額外的短逾時 sidecar）：
+# 生命週期故障回歸（需要額外的短逾時 sidecar）：
 docker compose -f test/compose.yaml --profile faults up -d penpot-mcp-timeout
 npm run test:lifecycle
+# 關機訊號、儲存失敗重試與 HTTP 回應送達（先 npm run build）：
+npm run test:shutdown
 
 docker compose down
 docker compose -f compose.dev.yaml down
@@ -135,6 +137,8 @@ docker compose -f test/compose.yaml --profile faults down
 測試 Compose 的映像固定為本次從官方 `latest` 拉取的 2.18.6 digest；重新驗證新版本時應一起更新 frontend、backend、exporter、MCP。測試帳號與簡化驗證設定只用於 loopback fixture，不能作為正式站設定。
 
 原生測試需要先啟動 `compose.dev.yaml` 的 sidecar。驗收 Docker gateway 時，可在 `test:e2e` 加上 `E2E_HTTP_URL=http://127.0.0.1:4545/mcp`，並指定與 gateway 站點相符的 `E2E_TARGETS_FILE`；測試會從本機 token 檔讀取授權，不會將 token 印出。
+
+`SIGTERM`／`SIGINT`／`SIGHUP` 由 Gateway 統一處理，先等待已接受操作與儲存確認，再關閉瀏覽器與 HTTP／stdio。儲存失敗時保留未能關閉的 editor 與 HTTP 恢復入口，記錄 `shutdown_failed`，每 5 秒重試；已成功關閉的檔案 handles 仍會失效。Compose 預設提供 5 分鐘關機等待，可用 `GATEWAY_STOP_GRACE_PERIOD` 調整。很長的工作佇列需要更長等待，建議停止前先 flush；外部強制終止或超過 Docker 等待期限仍可能中斷未完成工作。
 
 `down` 保留測試資料卷。只有要重置這個隔離 fixture 時才使用 `docker compose -f test/compose.yaml down -v`。既有站點驗收必須使用明確指定、名稱為 `Headless acceptance …` 的測試檔 manifest；不會自動搜尋或修改正式檔案。結果與截圖保存在未追蹤的 `test-results/`。
 

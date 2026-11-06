@@ -26,3 +26,5 @@
 `browser_started`、`editor_ready`、`page_selected`、`editor_lost`、`browser_closed` 提供生命週期事件與當時的 Node RSS；它不包含 Chromium 記憶體。正常閒置回收以 `operation=idle_reclaim` 關聯耗時；容量回收使用 `operation=worker_eviction`，非預期遺失才回報 `editor_lost`。首次連線探測可能遇到尚未連上的上游錯誤，應與最終開檔結果及 probe 次數一起判讀。
 
 沒有新增每次讀寫的額外 MCP 往返，也不為紀錄重新序列化大型回應。使用 `npm run test:diagnostics` 在專用 fixture 對照開啟／停用紀錄的暖機讀取與 1 MiB 回應；數據是當次主機環境的比較，並非普遍延遲保證。
+
+主程式關機失敗另記錄 `event=shutdown_failed`、安全的 `errorCode` 與 `retryMs`（預設 5000）；HTTP 恢復入口保持可用，之後重試儲存與回收。此錯誤即使停用一般耗時紀錄仍會輸出，不包含原始例外訊息或憑證。

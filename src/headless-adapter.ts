@@ -41,6 +41,7 @@ export class HeadlessAdapter implements DesignAdapter {
   constructor(private readonly config: Config, private readonly diagnostics = new Diagnostics()) {}
 
   private get page() { return this.editor?.page; }
+  get hasResources() { return !!(this.browser || this.context || this.client || this.sockets.size); }
 
   private binding(target: DocumentTarget): Binding {
     const existing = this.bindings.get(target);
@@ -129,7 +130,11 @@ export class HeadlessAdapter implements DesignAdapter {
     if (!info || !info.isFile()) throw new GatewayError('AUTH_REQUIRED', 'Run npm run auth in your terminal to create the Penpot login session.');
     if (process.platform !== 'win32' && (info.mode & 0o077)) throw new GatewayError('INSECURE_SESSION', 'Set the session file permissions to 0600.');
     const { chromium } = await import('playwright');
-    const browser = await chromium.launch({ headless: true, args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
+    const browser = await chromium.launch({ headless: true,
+      // The gateway drains accepted operations before closing browsers. The
+      // Playwright defaults would close them immediately on these signals.
+      handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false,
+      args: ['--disable-background-timer-throttling', '--disable-renderer-backgrounding'] });
     try {
       const context = await browser.newContext({ storageState: this.config.storageState, locale: 'en-US', viewport: { width: 1440, height: 1000 } });
       await this.routeMcp(context);
