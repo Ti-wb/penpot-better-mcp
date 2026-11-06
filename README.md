@@ -138,3 +138,5 @@ docker compose -f test/compose.yaml --profile faults down
 詳見 [architecture.md](docs/architecture.md)。官方 MCP 仍在瀏覽器 Plugin 中執行；本專案管理登入、開檔、連線路由與回收。它沒有繞過 Penpot 的檔案權限，也沒有將 MCP token 當作後端 PAT 使用。
 
 Gateway 預設記錄每次操作的排隊、啟動、上游、儲存與回收耗時，以及瀏覽器生命週期。欄位、隱私邊界與停用方式見 [diagnostics.md](docs/diagnostics.md)。
+
+實際操作請參考 [Agent 指引](docs/agent-guide.md)：頁面 handle、批次儲存、暫存生命週期及權限錯誤恢復。這些核心規則也會直接隨 MCP 初始化與概覽提供給 Agent。

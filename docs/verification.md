@@ -56,6 +56,8 @@ Docker gateway 的官方 `high_level_overview` 與 `penpot_api_info` 轉送也�
 
 耗時紀錄改善後，單元／HTTP 回歸共 12 項通過，包括排隊時間、巢狀階段不重複計算、超載／錯誤紀錄、內容隱私與紀錄失敗不影響操作。最新版 fixture 以 ABBA 順序比較開啟／停用紀錄，各 200 次暖機讀取與 20 次 1 MiB 回傳：暖機 p50 為 3.41／3.38 ms、p95 為 4.81／4.61 ms；大型回傳 p50 為 56.29／54.87 ms。沒有新增逐次 RPC；這組單機樣本的差異很小，並非統計上已證明零開銷。實測也確認瀏覽器啟動／回收事件及 response 大小。紀錄為 `test-results/diagnostics.json` 與不含 payload 的 `diagnostics.ndjson`。
 
+Agent 指引與錯誤分類已於最新版 2.18.6 及內網 2.18.5 各通過 3 項實測：`user:read` 拒絕被分類為 `PLUGIN_PERMISSION_DENIED`、無效腳本回傳 `SCRIPT_SYNTAX_ERROR`、兩種錯誤後正常讀取與 flush 仍可用。一般使用者回傳的相同錯誤文字不會被誤判。MCP HTTP 回歸確認初始化與概覽提供一致指引。證據為 `test-results/guidance.json`、`guidance-internal.json`。
+
 ## 映像版本
 
 本次先從官方拉取 `latest`，再固定為實際取得的 2.18.6 digest；沒有沿用本機舊 Penpot 映像。完整 digest 見 [test/compose.yaml](../test/compose.yaml) 與 [compose.yaml](../compose.yaml)。

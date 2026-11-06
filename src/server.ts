@@ -3,11 +3,12 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Gateway } from './gateway.js';
 import { GatewayError, publicError } from './errors.js';
+import { gatewayInstructions } from './instructions.js';
 
 function json(value: unknown): CallToolResult { return { content: [{ type: 'text', text: JSON.stringify(value) }] }; }
 export function createMcpServer(gateway: Gateway) {
   const server = new McpServer({ name: 'penpot-better-mcp', version: '0.1.0' }, {
-    instructions: 'Open a Penpot editor URL with open_document first. The gateway opens the browser and connects MCP automatically; do not ask the user to open a Penpot tab. Use the returned documentHandle on every design call. Read high_level_overview and API docs before executing code. Calls are serialized. Plugin storage resets on file switches or browser recovery; keep durable identifiers in your client. Never blindly retry an edit after EXECUTION_UNKNOWN or SAVE_UNCONFIRMED. If the browser was lost with unconfirmed work, old handles for that file cannot execute or flush. Call open_document for a fresh handle, read back saved data, and reconcile before editing. A fresh handle does not confirm previous writes. This worker represents one authenticated Penpot user. Viewer/share links are not supported yet.',
+    instructions: gatewayInstructions,
   });
   const safe = <T>(fn: (args: T) => Promise<CallToolResult>) => async (args: T) => {
     try { return await fn(args); } catch (error) { return { ...json(publicError(error)), isError: true }; }
@@ -32,7 +33,7 @@ export function createMcpServer(gateway: Gateway) {
   server.registerTool('high_level_overview', { description: 'Read the upstream Penpot Plugin API overview with managed-browser instructions.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(async () => {
     const result = await gateway.documentation('high_level_overview', {});
     return { ...result, content: [
-      { type: 'text', text: 'Gateway instructions override manual-connection steps below: call open_document(url); this gateway opens and connects Penpot automatically. Include documentHandle on design calls. For frequent reads and batched writes, use execute_code with save=deferred, then call flush_document after the write batch; deferred success is execution acknowledgment, not persistence confirmation. The default save=wait preserves per-call persistence checks. Plugin storage is temporary and resets on file switches, idle reclamation and recovery. This gateway exposes the tools in tools/list; the upstream local-filesystem import_image helper is not exposed. Use execute_code and documented Plugin media APIs for imports.' },
+      { type: 'text', text: gatewayInstructions },
       ...result.content,
     ] };
   }));
