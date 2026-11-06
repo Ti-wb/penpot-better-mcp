@@ -1,0 +1,27 @@
+# 功能範圍與缺口
+
+目前是單帳號、單站點的方案 A，尚未達成「所有 Penpot 連結與授權方式都自動處理」的完整產品範圍。
+
+本次實際查詢官方 2.18.6 sidecar 的 `tools/list`，公開工具為 `execute_code`、`high_level_overview`、`penpot_api_info`、`export_shape`，Proxy 已覆蓋這 4 個工具及公開參數；本輪也補齊了 `export_shape.mode=fill`。`import_image` 並不在這個官方部署的工具清單中；不能把原始碼中的本機 helper 當成已啟用的遠端功能。
+
+| 項目 | 目前狀態 | 驗證邊界 |
+|---|---|---|
+| Linux VM headless、自動開檔與 MCP 連線 | 已實作、實測 | 請在自己的專用 fixture 驗證 |
+| 檔案／頁面 handle、跨檔序列化 | 已實作 | 原生與 Docker E2E；大量切檔另見效能報告 |
+| 通用 Plugin API 讀寫 | 已轉送官方執行環境 | 矩形大量建立／更新／刪除已測，不等於每個 Plugin API 方法都逐一驗過 |
+| 官方概覽、型別／成員文件 | 已實作、實測 | 使用實際官方 sidecar |
+| PNG／SVG、原始圖片填色匯出 | 已實作、實測 | PNG 格式／尺寸、SVG XML 與 `mode=fill` 原始尺寸 |
+| 每次確認儲存 | 已實作、實測 | 預設 `save=wait`；失敗腳本可能已有部分修改 |
+| 高頻讀寫與批次確認 | 已實作 | `save=deferred` 加 `flush_document`；執行成功與落盤成功分開 |
+| 併發與過載 | 有界序列佇列 | 最多 32 筆；超量回 `BUSY`，不是無限制平行編輯 |
+| 逾時、無登入、官方工具失敗 | 已實作 | 不自動重送寫入；恢復／錯誤回歸測試 |
+| 帳密輸入與 session 儲存 | 已實作、實測 | 終端隱藏密碼；session/token 留本機，權限 0600 |
+| 檔案權限 | 沿用登入帳號與 Penpot | 已測授權檔案與無登入；未完整驗證唯讀角色、角色動態撤銷的所有組合 |
+| 分享／viewer 連結 | 未實作 | 目前明確拒絕，需另設受限讀取路徑 |
+| SSO／MFA 自動登入與 session 自動更新 | 未實作 | 可使用既有 storageState；失效仍須重新登入 |
+| 多租戶、跨站點自動授權 | 未實作 | 一個 gateway token 代表同一個可信任身分 |
+| 後端 API 直接讀取、revision cache（方案 C） | 未實作 | 已保留 adapter 邊界 |
+
+目前不應宣稱所有功能完整。方案 A 的已啟用官方 MCP 工具覆蓋完整；產品級連結／登入／多使用者範圍及每個 Plugin API 的完整相容性，仍有上述缺口。
+
+單次 JavaScript 上限為 100,000 字元，HTTP request body 上限 1 MB；回傳另受官方上游訊息限制。大量查詢應拆分範圍，不能把可開啟一個檔案等同於任意大小資料都能一次回傳。

@@ -12,7 +12,7 @@
 - Session 過期會回傳 `AUTH_REQUIRED`，重新執行登入指令即可。SSO/MFA 的互動式登入尚未實作，可提供已授權的 Playwright storageState。
 - 分享／viewer 連結目前明確拒絕，避免誤升級成完整檔案權限。多使用者服務、跨站自動授權與純後端 API adapter 是下一階段。
 
-驗收版本與實際結果見 [verification.md](docs/verification.md)。
+驗收版本與實際結果見 [verification.md](docs/verification.md)，功能範圍見 [functionality.md](docs/functionality.md)。
 
 ## 快速開始：Docker
 
@@ -55,15 +55,27 @@ MCP client 啟動命令可設定為 `docker`，arguments 為：
 |---|---|
 | `open_document(url)` | 開啟檔案，回傳 `documentHandle`、檔案資訊及頁面清單 |
 | `inspect_document(documentHandle)` | 讀取目前文件資訊 |
-| `execute_code(documentHandle, code)` | 使用官方 Plugin API 執行 JavaScript，可讀寫設計 |
-| `export_shape(documentHandle, shapeId, format)` | 回傳 PNG 或 SVG |
+| `execute_code(documentHandle, code, save?)` | 使用官方 Plugin API 執行 JavaScript；`save` 可選 `wait` 或 `deferred` |
+| `flush_document(documentHandle)` | 等待先前批次寫入完成儲存 |
+| `export_shape(documentHandle, shapeId, format, mode?)` | 回傳 PNG 圖片或 SVG 文字；`mode=fill` 匯出原始圖片填色（PNG） |
 | `close_document(documentHandle)` | 釋放 handle 與目前 browser；其他 handle 可重新開檔 |
 | `high_level_overview()` | 官方操作概覽 |
 | `penpot_api_info(type, member?)` | 官方 API 文件 |
 
-先讀取概覽及所需 API 文件，再執行操作。每次工具呼叫都指定 handle，避免使用隱含的「目前分頁」。程式碼必須 `await` 自己啟動的工作，不要留下未等待的背景修改。Plugin 的 `storage` 會在切檔、閒置回收及恢復 browser 時重置，需延續使用的物件 ID 請由 client 保存。上游讀取本機路徑的 `import_image` helper 尚未轉送；圖片可透過 `execute_code` 與 Plugin media API 匯入。
+先讀取概覽及所需 API 文件，再執行操作。每次工具呼叫都指定 handle，避免使用隱含的「目前分頁」。程式碼必須 `await` 自己啟動的工作，不要留下未等待的背景修改。Plugin 的 `storage` 會在切檔、閒置回收及恢復 browser 時重置，需延續使用的物件 ID 請由 client 保存。本次官方 sidecar 的工具清單不含本機路徑 `import_image`；圖片可透過 `execute_code` 與 Plugin media API 匯入。
 
-執行後會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。這不是跨系統交易保證。`EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED` 表示結果不確定，應先檢查文件，**不要直接重送寫入**。任意 JavaScript 可能在失敗前完成部分修改。
+預設 `save: "wait"` 會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。高頻讀取或連續批次修改請用 `save: "deferred"`，避免每一筆都等待儲存；完成一批寫入後呼叫 `flush_document`。切檔、正常關閉與閒置回收也會等待儲存。
+
+```text
+open_document(url) → documentHandle
+execute_code(documentHandle, code, save="deferred")
+execute_code(documentHandle, code, save="deferred")
+flush_document(documentHandle) → saved: true
+```
+
+`deferred` 的成功只表示程式執行完成，**不代表資料已落盤**；回覆的 `_meta.saveState` 為 `not_confirmed`。`wait` 及 `flush_document` 也不是跨系統交易保證。`EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED` 表示結果不確定，應先檢查文件，**不要直接重送寫入**。任意 JavaScript 可能在失敗前完成部分修改。
+
+同一 worker 依序處理操作，最多接受 32 個執行中／排隊請求；超出會明確回傳 `BUSY`。一次程式碼可修改多個物件，通常比逐一呼叫工具有效率；大量讀取應只回傳需要的欄位及範圍。
 
 ## 本機開發
 
@@ -96,6 +108,7 @@ docker compose -f test/compose.yaml up -d
 npm run fixture:setup
 E2E_TARGETS_FILE=.state/latest-targets.json PENPOT_STORAGE_STATE=.state/latest-session.json E2E_REPORT=latest.json npm run test:e2e
 npm run test:recovery
+npm run test:batch
 
 docker compose down
 docker compose -f compose.dev.yaml down
@@ -107,6 +120,8 @@ docker compose -f test/compose.yaml down
 原生測試需要先啟動 `compose.dev.yaml` 的 sidecar。驗收 Docker gateway 時，可在 `test:e2e` 加上 `E2E_HTTP_URL=http://127.0.0.1:4545/mcp`，並指定與 gateway 站點相符的 `E2E_TARGETS_FILE`；測試會從本機 token 檔讀取授權，不會將 token 印出。
 
 `down` 保留測試資料卷。只有要重置這個隔離 fixture 時才使用 `docker compose -f test/compose.yaml down -v`。既有站點驗收必須使用明確指定、名稱為 `Headless acceptance …` 的測試檔 manifest；不會自動搜尋或修改正式檔案。結果與截圖保存在未追蹤的 `test-results/`。
+
+大量讀寫比較使用 `npm run test:load`；需明確提供 `E2E_TARGETS_FILE`，在兩個專用檔案各建立 3,000 個圖形。設定 `LOAD_PHASE=optimized` 使用批次模式，完成後會清理自身圖形。需要保留資料重跑時才使用 `LOAD_KEEP_FIXTURE=1`。比較方法、數字及限制見 [performance.md](docs/performance.md)。
 
 ## 架構與後續
 
