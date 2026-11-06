@@ -19,12 +19,13 @@ function fixture(limit = 2, idleMs = 600_000) {
   let peak = 0;
   const gateway = new Gateway(file => {
     assert(file); assert(!live.has(file), 'duplicate live file worker');
-    let busy = false;
+    let busy = false, resident = false;
     const activate = () => {
-      if (!live.has(file)) { live.add(file); generations.set(file, (generations.get(file) || 0) + 1); peak = Math.max(peak, live.size); }
+      if (!resident) { resident = true; live.add(file); generations.set(file, (generations.get(file) || 0) + 1); peak = Math.max(peak, live.size); }
       assert(live.size <= limit);
     };
     const adapter: DesignAdapter = {
+      get hasResources() { return resident; },
       open: async target => { assert.equal(target.fileId, file); activate(); return ok; },
       openPage: async () => { activate(); return ok; },
       execute: async target => {
@@ -33,7 +34,7 @@ function fixture(limit = 2, idleMs = 600_000) {
         try { executions.push(file); await delay(1); counts.set(file, before + 1); return ok; } finally { busy = false; }
       },
       flush: async () => ok, flushPending: async () => {}, exportShape: async () => ok, documentation: async () => ok,
-      release: () => {}, close: async () => { assert(!busy, 'reclaimed active code'); live.delete(file); },
+      release: () => {}, close: async () => { assert(!busy, 'reclaimed active code'); resident = false; live.delete(file); },
     };
     adapters.set(file, adapter); return adapter;
   }, base, idleMs, new Diagnostics(e => events.push(e)), limit);
@@ -168,6 +169,39 @@ test('handle reservations and both queue bounds reject overload without leaking 
 test('invalid worker capacity fails configuration before opening resources',()=>{
   for(const value of ['0','17','1.5','bad'])assert.throws(()=>loadConfig({PENPOT_MAX_WORKERS:value}),/WORKERS/);
   assert.equal(loadConfig({}).maxWorkers,2);assert.equal(loadConfig({PENPOT_MAX_WORKERS:'1'}).maxWorkers,1);
+});
+
+test('retired browser releases capacity even when its earlier save remains unknown', {timeout:5000}, async()=>{
+  const f=fixture(1),g=f.gateway;
+  let restore=()=>{};
+  try {
+    const first=(await g.open(url(1))).documentHandle!;
+    const adapter=f.adapters.get(id(1))!,close=adapter.close;restore=()=>{adapter.close=close;};
+    adapter.close=async()=>{await close();throw new GatewayError('SAVE_UNCONFIRMED','browser already lost',true);};
+    const next=await g.open(url(2));
+    assert(next.documentHandle);assert.deepEqual([...f.live],[id(2)]);
+    adapter.close=close;
+    await g.closeDocument(first);
+  } finally {restore();await g.shutdown();}
+});
+
+test('a slow eviction does not block another queued file from using a released slot', {timeout:5000}, async()=>{
+  const f=fixture(),g=f.gateway,closing=gate(),releaseClose=gate(),working=gate(),releaseWork=gate();
+  const requests:Promise<unknown>[]=[];
+  try {
+    await g.open(url(1));const b=(await g.open(url(2))).documentHandle!;
+    const first=f.adapters.get(id(1))!,close=first.close;
+    first.close=async()=>{closing.resolve();await releaseClose.promise;await close();};
+    const second=f.adapters.get(id(2))!,execute=second.execute;
+    second.execute=async(...args)=>{working.resolve();await releaseWork.promise;return execute(...args);};
+    const busy=g.execute(b,'increment');requests.push(busy);await working.promise;
+    const cold=g.open(url(3));requests.push(cold);await closing.promise;
+    releaseWork.resolve();await busy;
+    await delay(0);
+    assert(f.live.has(id(2)),'one waiting file caused unnecessary eviction of a second warm browser');
+    requests.push(g.open(url(4)));
+    assert(await Promise.race([cold.then(()=>true),delay(200).then(()=>false)]),'available capacity waited behind unrelated slow eviction');
+  } finally {releaseWork.resolve();releaseClose.resolve();await Promise.allSettled(requests);await g.shutdown();}
 });
 
 test('shutdown drains an accepted reopen waiting for empty-worker disposal', {timeout:5000}, async()=>{

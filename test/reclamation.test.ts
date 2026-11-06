@@ -7,7 +7,7 @@ import { Diagnostics } from '../src/diagnostics.js';
 
 const ok = {content: [{type:'text' as const,text:'{}'}]};
 const base = 'https://penpot.example', url = base + '/#/workspace?team-id=11111111-1111-4111-8111-111111111111&file-id=22222222-2222-4222-8222-222222222222';
-function fake(): DesignAdapter { return {open:async()=>ok,openPage:async()=>ok,execute:async()=>ok,flush:async()=>ok,flushPending:async()=>{},exportShape:async()=>ok,documentation:async()=>ok,release:()=>{},close:async()=>{}}; }
+function fake(): DesignAdapter { return {hasResources:false,open:async()=>ok,openPage:async()=>ok,execute:async()=>ok,flush:async()=>ok,flushPending:async()=>{},exportShape:async()=>ok,documentation:async()=>ok,release:()=>{},close:async()=>{}}; }
 const delay = (ms:number) => new Promise(r=>setTimeout(r,ms));
 async function until(check:()=>boolean) { const end=Date.now()+2000; while(!check()) { assert(Date.now()<end,'timed out'); await delay(5); } }
 

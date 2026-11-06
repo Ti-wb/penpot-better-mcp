@@ -31,7 +31,8 @@ export class Gateway implements GatewayApi {
   }
   private create(fileId: string): Entry {
     const adapter = this.adapter(fileId);
-    const entry = { fileId, pending: 0, worker: new DocumentWorker(adapter, this.baseUrl, this.idleMs, this.diagnostics, this.pool.register(() => adapter.close())) };
+    const entry = { fileId, pending: 0, worker: new DocumentWorker(adapter, this.baseUrl, this.idleMs, this.diagnostics,
+      this.pool.register(() => adapter.close(), () => adapter.hasResources)) };
     this.workers.set(fileId, entry); return entry;
   }
   private reject<T>(operation: Operation, error: unknown): Promise<T> {

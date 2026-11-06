@@ -6,6 +6,8 @@ export interface ExportOptions { shapeId: string; format: 'png' | 'svg'; mode?: 
 
 /** Operation boundary for a future backend API adapter. No browser types cross it. */
 export interface DesignAdapter {
+  /** Resources still owned by this adapter, including after a failed close. */
+  readonly hasResources: boolean;
   open(target: DocumentTarget): Promise<CallToolResult>;
   openPage(source: DocumentTarget, target: DocumentTarget): Promise<CallToolResult>;
   execute(target: DocumentTarget, code: string, save?: SaveMode): Promise<CallToolResult>;

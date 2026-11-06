@@ -16,7 +16,7 @@ const file = '22222222-2222-4222-8222-222222222222';
 const page = '33333333-3333-4333-8333-333333333333';
 const url = `${base}/#/workspace?team-id=${team}&file-id=${file}&page-id=${page}`;
 const ok = { content: [{ type: 'text' as const, text: '{}' }] };
-function fake(): DesignAdapter { return { open: async () => ok, openPage: async () => ok, execute: async () => ok, flush: async () => ok, flushPending: async () => {}, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
+function fake(): DesignAdapter { return { hasResources: false, open: async () => ok, openPage: async () => ok, execute: async () => ok, flush: async () => ok, flushPending: async () => {}, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
 
 test('page handles keep independent targets and failed page opens release their binding', async () => {
   const adapter = fake(); const seen: (string | undefined)[] = []; let released = 0;

@@ -80,10 +80,10 @@ async function navigation() {
   } finally { await gateway.shutdown(); }
 }
 
-async function browserLoss(loss: 'browser' | 'page') {
+async function browserLoss(loss: 'browser' | 'page', capacity = 2) {
   const adapter = new HeadlessAdapter(config);
   const otherAdapter = new HeadlessAdapter(config);
-  const gateway = new Gateway(file => file === targets.files[0].id ? adapter : otherAdapter, config.baseUrl);
+  const gateway = new Gateway(file => file === targets.files[0].id ? adapter : otherAdapter, config.baseUrl, 600_000, undefined, capacity);
   const marker = `lifecycle-loss-${randomUUID()}`;
   let release = () => {};
   let cleanupHandle: string | undefined;
@@ -106,13 +106,19 @@ async function browserLoss(loss: 'browser' | 'page') {
     } finally { clearTimeout(timer!); }
     if (loss === 'browser') await adapter['browser']!.close();
     else await adapter['page']!.close();
-    assert.equal(data(await gateway.execute(other.documentHandle, 'return storage.faultIsolation;', 'deferred')).result, 42);
-    assert.equal(otherAdapter['browser'], otherBrowser);
+    if (capacity === 2) {
+      assert.equal(data(await gateway.execute(other.documentHandle, 'return storage.faultIsolation;', 'deferred')).result, 42);
+      assert.equal(otherAdapter['browser'], otherBrowser);
+    } else {
+      assert.equal(data(await gateway.execute(other.documentHandle, 'return penpot.currentFile.id;', 'deferred')).result, targets.files[1].id);
+      assert.notEqual(otherAdapter['browser'], otherBrowser);
+      assert.equal(adapter.hasResources, false);
+    }
     for (const documentHandle of [first.documentHandle, alias.documentHandle]) {
       await assert.rejects(gateway.flush(documentHandle), errorCode('SAVE_UNCONFIRMED'));
       await assert.rejects(gateway.execute(documentHandle, 'throw new Error("must not dispatch");'), errorCode('SAVE_UNCONFIRMED'));
     }
-    await assert.rejects(gateway.closeDocument(first.documentHandle), errorCode('SAVE_UNCONFIRMED'));
+    if (capacity === 2) await assert.rejects(gateway.closeDocument(first.documentHandle), errorCode('SAVE_UNCONFIRMED'));
     assert.equal(adapter['browser'], undefined); assert.equal(adapter['context'], undefined);
     const inspected = await gateway.inspect(first.documentHandle);
     // Keep the request blocked until the abandoned context is gone: closing
@@ -133,7 +139,7 @@ async function browserLoss(loss: 'browser' | 'page') {
     await assert.rejects(gateway.flush(first.documentHandle), errorCode('SAVE_UNCONFIRMED'));
     await gateway.execute(cleanupHandle, remove(marker));
     assert.equal(data(await gateway.execute(other.documentHandle, 'return penpot.currentFile.id;')).result, targets.files[1].id);
-    check(`${loss} loss invalidates every old handle for the affected file; new and unrelated handles remain usable`);
+    check(`${loss} loss at capacity ${capacity} invalidates old handles; unrelated files keep working and retired resources release capacity`);
   } finally {
     release();
     if (cleanupHandle) await gateway.execute(cleanupHandle, remove(marker)).catch(() => {});
@@ -182,6 +188,7 @@ let status = 'failed';
 try {
   await initialization(); await navigation();
   await browserLoss('browser'); await browserLoss('page');
+  await browserLoss('browser', 1);
   await upstreamTimeout(); status='passed';
 } finally {
   await mkdir('test-results', {recursive:true});

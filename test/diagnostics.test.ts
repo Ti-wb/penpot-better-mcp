@@ -10,7 +10,7 @@ const ok = { content: [{ type: 'text' as const, text: 'private-design-content' }
 const base = 'https://private.example';
 const url = base + '/#/workspace?team-id=11111111-1111-4111-8111-111111111111&file-id=22222222-2222-4222-8222-222222222222';
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
-function fake(): DesignAdapter { return { open: async () => ok, openPage: async () => ok, execute: async () => ok, flush: async () => ok, flushPending: async () => {}, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
+function fake(): DesignAdapter { return { hasResources: false, open: async () => ok, openPage: async () => ok, execute: async () => ok, flush: async () => ok, flushPending: async () => {}, exportShape: async () => ok, documentation: async () => ok, release: () => {}, close: async () => {} }; }
 
 test('diagnostics separate queued time and nested phases without logging payloads', async () => {
   const records: Record<string, any>[] = [];

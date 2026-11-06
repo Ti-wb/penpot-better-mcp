@@ -17,6 +17,7 @@
     "test:recovery": "tsx test/recovery.ts",
     "test:batch": "tsx test/batch.ts",
     "test:lifecycle": "tsx test/lifecycle.ts",
+    "test:shutdown": "tsx test/shutdown.ts",
     "test:pages": "tsx test/pages.ts",
     "test:diagnostics": "tsx test/diagnostics.ts",
     "test:guidance": "tsx test/guidance.ts",
