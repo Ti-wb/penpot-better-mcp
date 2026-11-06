@@ -121,6 +121,11 @@ For multi-agent work, put dependent read/compute/write steps in one `execute_cod
 - Per gateway: up to 128 handles and 128 accepted operations, with 32 operations per file. A full operation queue returns `BUSY`; JavaScript is limited to 100,000 characters and HTTP request bodies to 1 MB.
 - The gateway forwards Plugin API operations within the deployed plugin's permissions. This does not mean every API method has been verified. Editing currently uses Chromium; direct backend API access is a future extension.
 
+## Roadmap
+
+- [ ] Faster, lower-cost bulk reads without relying on a browser.
+- [ ] Faster, lower-cost bulk writes.
+
 ## Development and documentation
 
 ```bash
