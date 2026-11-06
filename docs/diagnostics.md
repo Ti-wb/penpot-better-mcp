@@ -2,6 +2,8 @@
 
 預設在 stderr 輸出一行 JSON 對應一次 Gateway 操作。`docker compose logs gateway` 可查看；`PENPOT_DIAGNOSTICS=false` 可停用。stdio 的 stdout 保留給 MCP。紀錄不包含 URL、文件／頁面 ID、handle、程式碼、回傳內容、帳號或憑證。
 
+隨附 Compose 的 Gateway 使用 Docker `local` log driver，單檔 10 MB、最多 3 檔輪替，避免長期高頻操作讓紀錄無限制增加。原生 Node／stdio 的 stderr 保存與輪替由啟動端管理。
+
 `event=request` 的欄位：
 
 | 欄位 | 定義 |

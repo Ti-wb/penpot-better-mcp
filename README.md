@@ -59,7 +59,7 @@ MCP client 啟動命令可設定為 `docker`，arguments 為：
 | `execute_code(documentHandle, code, save?)` | 使用官方 Plugin API 執行 JavaScript；`save` 可選 `wait` 或 `deferred` |
 | `flush_document(documentHandle)` | 等待先前批次寫入完成儲存 |
 | `export_shape(documentHandle, shapeId, format, mode?)` | 回傳 PNG 圖片或 SVG 文字；`mode=fill` 匯出原始圖片填色（PNG） |
-| `close_document(documentHandle)` | 釋放 handle 與目前 browser；其他 handle 可重新開檔 |
+| `close_document(documentHandle)` | 確認儲存並釋放 handle；最後一個 handle 關閉時釋放 browser |
 | `high_level_overview()` | 官方操作概覽 |
 | `penpot_api_info(type, member?)` | 官方 API 文件 |
 
@@ -68,6 +68,8 @@ MCP client 啟動命令可設定為 `docker`，arguments 為：
 切頁請呼叫 `open_page(handle, pageId)`，並使用回傳的 **新 handle**。它會先確認儲存，再透過目前 editor 切頁，不會重新載入瀏覽器分頁。建立頁面時先用 `execute_code` 回傳 `penpot.createPage()` 的 ID，再交給 `open_page`。若程式自行呼叫 `penpot.openPage`，下一次沿用原頁 handle 會回 `DOCUMENT_CONTEXT_CHANGED`，附上 `details.expected`／`details.actual`；該次使用者程式尚未執行。此時明確選擇頁面取得新 handle 即可，舊 handle 不會被靜默改綁。
 
 預設 `save: "wait"` 會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。高頻讀取或連續批次修改請用 `save: "deferred"`，避免每一筆都等待儲存；完成一批寫入後呼叫 `flush_document`。切檔、正常關閉與閒置回收也會等待儲存。
+
+`close_document` 回傳 `browserReleased` 與 `remainingHandles`。關閉舊頁面的 handle 不會打斷其他 handle 使用的編輯器或清除 Plugin storage；最後一個 handle 關閉才回收整個瀏覽器。不再使用的 handles 應主動關閉。預設閒置 10 分鐘也會確認儲存並回收瀏覽器，保留 handles 供下次重新開檔；儲存未確認時保留編輯器，下一個閒置週期再檢查。
 
 ```text
 open_document(url) → documentHandle
@@ -116,6 +118,8 @@ npm run test:recovery
 npm run test:batch
 npm run test:pages
 npm run test:diagnostics
+npm run test:guidance
+npm run test:reclamation
 # 四項審查問題的故障回歸（需要額外的短逾時 sidecar）：
 docker compose -f test/compose.yaml --profile faults up -d penpot-mcp-timeout
 npm run test:lifecycle
@@ -140,3 +144,5 @@ docker compose -f test/compose.yaml --profile faults down
 Gateway 預設記錄每次操作的排隊、啟動、上游、儲存與回收耗時，以及瀏覽器生命週期。欄位、隱私邊界與停用方式見 [diagnostics.md](docs/diagnostics.md)。
 
 實際操作請參考 [Agent 指引](docs/agent-guide.md)：頁面 handle、批次儲存、暫存生命週期及權限錯誤恢復。這些核心規則也會直接隨 MCP 初始化與概覽提供給 Agent。
+
+更新 Gateway 新增工具後，MCP client 需要重新探索工具清單。本次 Codex 驗收中，新連線可見 9 個工具，既有執行中回合仍保留舊清單；請在新對話使用新增的 `open_page`。

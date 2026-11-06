@@ -20,6 +20,7 @@
     "test:pages": "tsx test/pages.ts",
     "test:diagnostics": "tsx test/diagnostics.ts",
     "test:guidance": "tsx test/guidance.ts",
+    "test:reclamation": "tsx test/reclamation.ts",
     "test:load": "tsx test/load.ts",
     "auth": "tsx src/auth-cli.ts",
     "init": "node scripts/init-state.mjs",

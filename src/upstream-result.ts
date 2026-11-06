@@ -23,6 +23,7 @@ export function normalizeUpstreamResult(result: CallToolResult): CallToolResult 
     message: 'This Penpot MCP plugin has not granted this permission. Avoid the denied API; file edit access is a separate check. Inspect any earlier edits in this script before retrying.',
   } : syntax ? {
     code: 'SCRIPT_SYNTAX_ERROR', partialEditsPossible: true,
+    details: { upstreamMessage: message },
     message: 'JavaScript reported a syntax error. Check the script syntax and use smaller chunks. Inspect earlier edits before retrying: code can also throw SyntaxError at runtime.',
   } : undefined;
   return { ...result, isError: true, ...(guidance ? {content: result.content.map(item => item === failed ? {type: 'text' as const, text: JSON.stringify(guidance)} : item)} : {}) };

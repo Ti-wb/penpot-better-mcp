@@ -42,6 +42,9 @@ try {
     assert.equal(adapter['browser'], browser); assert.equal(adapter['page'], editor);
   }
   assert.equal(data(await gateway.execute(current, 'return storage.pageAcceptance;', 'deferred')).result, 42);
+  current = (await gateway.openPage(rootHandle, created[0])).documentHandle!;
+  assert.equal(adapter['browser'], browser); assert.equal(adapter['page'], editor);
+  assert.equal(data(await gateway.execute(current, 'return storage.pageAcceptance;', 'deferred')).result, 42);
   check('12 explicit page switches reuse the browser, editor and plugin storage with new bound handles');
 
   const before = data(await gateway.execute(current, 'return penpot.currentPage.id;', 'deferred')).result;

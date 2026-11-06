@@ -47,7 +47,7 @@ try {
   const image = exported.content.find(c => c.type === 'image'); assert(image && image.type === 'image');
   const bytes = Buffer.from(image.data, 'base64'); assert.equal(bytes.subarray(1,4).toString(), 'PNG');
   await mkdir('test-results', { recursive: true }); await writeFile(`test-results/${(process.env.E2E_REPORT || 'acceptance.json').replace('.json','')}-export.png`, bytes); check('PNG export through official MCP');
-  await call('close_document', { documentHandle: a.documentHandle });
+  for (const documentHandle of [...handles]) await call('close_document', { documentHandle });
   const reopened = data(await call('open_document', { url: targets.files[0].url }));
   const found = data(await call('execute_code', { documentHandle: reopened.documentHandle, code: `return penpotUtils.findShapes(s=>s.id===${JSON.stringify(created.id)}).map(s=>({id:s.id,name:s.name}));` })).result;
   assert.equal(found.length, 1); assert.equal(found[0].name, marker); check('browser teardown and cold reopen retain saved changes');
