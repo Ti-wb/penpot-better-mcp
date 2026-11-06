@@ -12,6 +12,7 @@ services:
     build: .
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     init: true
+    stop_grace_period: ${GATEWAY_STOP_GRACE_PERIOD:-5m}
     shm_size: 1gb
     ports: ["127.0.0.1:${GATEWAY_PORT:-4545}:3000"]
     environment:
@@ -21,6 +22,7 @@ services:
       PENPOT_UPSTREAM_WS: ws://upstream:4402
       PENPOT_DIAGNOSTICS: ${PENPOT_DIAGNOSTICS:-true}
       PENPOT_IDLE_MS: ${PENPOT_IDLE_MS:-600000}
+      PENPOT_MAX_WORKERS: ${PENPOT_MAX_WORKERS:-2}
       GATEWAY_TOKEN_FILE: /app/.state/gateway-token
       HOST: 0.0.0.0
     volumes: ["./.state:/app/.state:ro"]

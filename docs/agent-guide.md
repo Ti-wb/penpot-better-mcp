@@ -8,9 +8,17 @@ MCP 初始化與 `high_level_overview` 都提供相同核心指引。以下為�
 4. 連續操作可用 `save: "deferred"`；批次完成、交接或收尾前執行 `flush_document`。預設 `save: "wait"` 則逐次確認。不要把 deferred 成功當成已儲存。
 5. 讀回重要計數／ID／修改結果，再關閉不需要的 handles。所有非同步修改都應在腳本內 `await`，避免回傳後仍有背景寫入。
 
-文件與頁面 target 綁定在 handle 上。`open_page` 保留同一編輯器的 Plugin storage；切檔、閒置回收、故障重建會清空暫存，所以重要 ID 與批次進度應由呼叫端保存。每次 `open_page` 都產生新 handle，不要任由它們累積到 128 個上限。
+文件與頁面 target 綁定在 handle 上。`open_page` 保留同一編輯器的 Plugin storage；worker 容量回收、閒置回收、故障重建會清空暫存，所以重要 ID 與批次進度應由呼叫端保存。每次 `open_page` 都產生新 handle，不要任由它們累積到 128 個上限。
 
-關閉已被取代的 handle 會確認當前待儲存工作，但保留其他 handle 正在使用的編輯器；關閉最後一個 handle 才退出瀏覽器。可用回傳的 `browserReleased` 與 `remainingHandles` 確認收尾狀態。預設 10 分鐘閒置回收會退出瀏覽器，下一次呼叫可用原 handle 重新載入。
+關閉已被取代的 handle 會確認當前待儲存工作，但保留其他 handle 正在使用的編輯器；同檔最後一個 handle 關閉才退出該檔瀏覽器，其他檔案保持可用。可用回傳的 `browserReleased`、`remainingFileHandles` 與全域 `remainingHandles` 確認收尾狀態。預設 10 分鐘閒置回收會退出瀏覽器，下一次呼叫可用原 handle 重新載入。
+
+## 多 Agent 協作
+
+請連到同一個 HTTP endpoint。不同檔案各有 worker，可在容量內真正平行；同檔各頁面共用一條佇列。預設最多保留 2 個 browser，超過後先確認儲存再回收閒置 worker。個別 client 斷線不會關閉其他 client 的 handle；不用的 handle 仍應明確關閉。獨立 stdio／gateway processes 之間沒有共享鎖。
+
+佇列只保護單次呼叫，不會鎖住一整段 Agent 工作流程。若兩個 Agent 分別讀取 `x=0`，之後各寫 `x=1`，結果仍然只有 1。把依賴現值的「讀、算、寫」放在同一段 `execute_code`，或寫入前確認現值仍等於規劃時的值，否則停止並重新讀取。即使腳本失敗，也可能已有部分修改；這不是資料庫交易。
+
+同檔 Agents 共用 Plugin storage，請使用各自的 key 前綴，並分配圖形／頁面編輯範圍。人類或另一個 gateway 的編輯不受這條佇列保護。
 
 ## 權限與錯誤
 
@@ -20,7 +28,8 @@ MCP 初始化與 `high_level_overview` 都提供相同核心指引。以下為�
 | `PLUGIN_PERMISSION_DENIED` | 看 `permission` 欄位；停止重試受限 API，設計內容存取是否可用要分開判斷。腳本可能已完成前段修改，應先讀回 |
 | `SCRIPT_SYNTAX_ERROR` | 依 `details.upstreamMessage` 保留的原始錯誤修正 JavaScript，縮小腳本並檢查括號／字串。此類別也可能是執行時拋出的 SyntaxError，不能假定全部修改都未發生 |
 | `EXECUTION_UNKNOWN`／`SAVE_UNCONFIRMED` | 不重送寫入；重新 open 取得 fresh handle，讀回已保存的資料後再調整。新 handle 成功不會替舊寫入背書 |
-| `BUSY` | 等待已有操作完成，再降低併發；超過 32 筆接受中的操作會拒絕 |
+| `WORKER_CAPACITY` | 其他檔案無法確認儲存，無法安全回收；先處理那些檔案的儲存狀態，新呼叫的設計程式尚未執行 |
+| `BUSY` | 等待已有操作完成，再降低併發；每檔超過 32 筆或全域超過 128 筆接受中的操作會拒絕 |
 
 API 文件不代表已取得權限。缺少 `user:read` 的 Plugin 無法存取 `activeUsers`。一般設計請省略 `currentUser` / `activeUsers` 探測；Gateway 不替 Plugin 擴權，升級後請驗證自己的站點。
 

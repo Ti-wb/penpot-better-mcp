@@ -2,12 +2,12 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { GatewayError } from './errors.js';
 
-export type Operation = 'open_document' | 'open_page' | 'inspect_document' | 'execute_code' | 'flush_document' | 'export_shape' | 'close_document' | 'high_level_overview' | 'penpot_api_info' | 'idle_reclaim' | 'shutdown';
-type Phase = 'activationMs' | 'upstreamMs' | 'saveMs' | 'cleanupMs';
+export type Operation = 'open_document' | 'open_page' | 'inspect_document' | 'execute_code' | 'flush_document' | 'export_shape' | 'close_document' | 'high_level_overview' | 'penpot_api_info' | 'idle_reclaim' | 'worker_eviction' | 'shutdown';
+type Phase = 'activationMs' | 'upstreamMs' | 'saveMs' | 'cleanupMs' | 'workerWaitMs';
 type Lifecycle = 'browser_started' | 'browser_closed' | 'editor_ready' | 'editor_lost' | 'page_selected';
 type RecordSink = (record: Record<string, unknown>) => void;
-interface Timing { activationMs: number; upstreamMs: number; saveMs: number; cleanupMs: number; upstreamCalls: number; connectionProbeRetries: number; }
-interface Scope { requestId: string; operation: Operation; timing: Timing; phase?: Phase; live: { value: boolean }; }
+interface Timing { activationMs: number; upstreamMs: number; saveMs: number; cleanupMs: number; workerWaitMs: number; upstreamCalls: number; connectionProbeRetries: number; }
+interface Scope { requestId: string; operation: Operation; workerId?: string; timing: Timing; phase?: Phase; live: { value: boolean }; }
 
 function toolResult(value: unknown): { isError?: unknown; content?: unknown } | undefined {
   if (!value || typeof value !== 'object') return;
@@ -38,10 +38,10 @@ export class Diagnostics {
   private emit(record: Record<string, unknown>) {
     try { this.sink?.({ eventVersion: 1, at: new Date().toISOString(), ...record }); } catch { /* Logging must not change tool outcomes. */ }
   }
-  async run<T>(operation: Operation, queuedAt: number, queuedAhead: number, task: () => Promise<T>): Promise<T> {
+  async run<T>(operation: Operation, queuedAt: number, queuedAhead: number, task: () => Promise<T>, workerId?: string): Promise<T> {
     if (!this.sink) return task();
     const started = performance.now();
-    const scope: Scope = { requestId: randomUUID(), operation, live: { value: true }, timing: { activationMs: 0, upstreamMs: 0, saveMs: 0, cleanupMs: 0, upstreamCalls: 0, connectionProbeRetries: 0 } };
+    const scope: Scope = { requestId: randomUUID(), operation, workerId, live: { value: true }, timing: { activationMs: 0, upstreamMs: 0, saveMs: 0, cleanupMs: 0, workerWaitMs: 0, upstreamCalls: 0, connectionProbeRetries: 0 } };
     return this.context.run(scope, async () => {
       let value: T | undefined, errorCode: string | undefined;
       try { value = await task(); errorCode = resultError(toolResult(value)); return value; }
@@ -49,7 +49,7 @@ export class Diagnostics {
       finally {
         scope.live.value = false;
         const timing = Object.fromEntries(Object.entries(scope.timing).map(([key, value]) => [key, Math.round(Math.max(0, value) * 100) / 100]));
-        this.emit({ event: 'request', requestId: scope.requestId, operation, outcome: errorCode ? 'error' : 'ok', ...(errorCode ? { errorCode } : {}),
+        this.emit({ event: 'request', requestId: scope.requestId, ...(workerId ? {workerId} : {}), operation, outcome: errorCode ? 'error' : 'ok', ...(errorCode ? { errorCode } : {}),
           queuedAhead, queueMs: Math.round((started - queuedAt) * 100) / 100, totalMs: Math.round((performance.now() - queuedAt) * 100) / 100,
           ...timing, responseContentBytes: contentBytes(toolResult(value)) });
       }
@@ -77,6 +77,6 @@ export class Diagnostics {
   lifecycle(event: Lifecycle, forced = false) {
     if (!this.sink) return;
     const scope = this.context.getStore();
-    this.emit({ event, ...(scope?.live.value ? { requestId: scope.requestId, operation: scope.operation } : {}), forced, nodeRssBytes: process.memoryUsage().rss });
+    this.emit({ event, ...(scope?.live.value ? { requestId: scope.requestId, operation: scope.operation, ...(scope.workerId ? {workerId:scope.workerId} : {}) } : {}), forced, nodeRssBytes: process.memoryUsage().rss });
   }
 }
