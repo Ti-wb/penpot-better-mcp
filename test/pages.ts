@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { HeadlessAdapter } from '../src/headless-adapter.js';
-import { Gateway } from '../src/gateway.js';
+import { DocumentWorker } from '../src/document-worker.js';
 import { GatewayError } from '../src/errors.js';
 import { loadConfig } from '../src/config.js';
 
@@ -13,7 +13,7 @@ assert(targets.files.every((file: {name: string}) => file.name.startsWith('Headl
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve('.runtime/browsers');
 const adapter = new HeadlessAdapter(loadConfig({...process.env, PENPOT_BASE_URL: targets.base,
   PENPOT_STORAGE_STATE: process.env.PENPOT_STORAGE_STATE || '.state/latest-session.json'}));
-const gateway = new Gateway(adapter, targets.base);
+const gateway = new DocumentWorker(adapter, targets.base);
 const checks: string[] = [], switchMs: number[] = [];
 const created: string[] = [];
 let rootHandle: string | undefined, rootPage: string | undefined;
@@ -46,6 +46,15 @@ try {
   assert.equal(adapter['browser'], browser); assert.equal(adapter['page'], editor);
   assert.equal(data(await gateway.execute(current, 'return storage.pageAcceptance;', 'deferred')).result, 42);
   check('12 explicit page switches reuse the browser, editor and plugin storage with new bound handles');
+
+  const retained = current;
+  const another = (await gateway.openPage(current, created[1])).documentHandle!;
+  for (let i = 0; i < 8; i++) {
+    current = i % 2 ? another : retained;
+    assert.equal(data(await gateway.execute(current, 'return storage.pageAcceptance;', 'deferred')).result, 42);
+    assert.equal(adapter['browser'], browser); assert.equal(adapter['page'], editor);
+  }
+  check('alternating retained page handles also reuse the editor and plugin storage');
 
   const before = data(await gateway.execute(current, 'return penpot.currentPage.id;', 'deferred')).result;
   await assert.rejects(gateway.openPage(current, randomUUID()), error => error instanceof GatewayError && error.code === 'PAGE_NOT_FOUND');

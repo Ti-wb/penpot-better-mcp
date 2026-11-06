@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { HeadlessAdapter } from '../src/headless-adapter.js';
 import { Diagnostics } from '../src/diagnostics.js';
-import { Gateway } from '../src/gateway.js';
+import { DocumentWorker } from '../src/document-worker.js';
 import { loadConfig } from '../src/config.js';
 
 const targets = JSON.parse(await readFile(process.env.E2E_TARGETS_FILE || '.state/latest-targets.json', 'utf8'));
@@ -20,7 +20,7 @@ try {
     const diagnostics = new Diagnostics(enabled ? record => { output.write(JSON.stringify(record) + '\n'); } : undefined);
     const config = loadConfig({...process.env, PENPOT_BASE_URL: targets.base, PENPOT_STORAGE_STATE: process.env.PENPOT_STORAGE_STATE || '.state/latest-session.json'});
     const adapter = new HeadlessAdapter(config, diagnostics);
-    const gateway = new Gateway(adapter, targets.base, 600_000, diagnostics);
+    const gateway = new DocumentWorker(adapter, targets.base, 600_000, diagnostics);
     try {
       const {documentHandle: handle} = await gateway.open(targets.files[0].url); assert(handle);
       for (let i = 0; i < 10; i++) assert(!(await gateway.execute(handle, 'return 1;', 'deferred')).isError);

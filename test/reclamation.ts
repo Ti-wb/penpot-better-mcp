@@ -6,7 +6,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Browser } from 'playwright';
 import { HeadlessAdapter } from '../src/headless-adapter.js';
 import { Diagnostics } from '../src/diagnostics.js';
-import { Gateway } from '../src/gateway.js';
+import { DocumentWorker } from '../src/document-worker.js';
 import { loadConfig } from '../src/config.js';
 import { parseDocument, targetPage } from '../src/document.js';
 
@@ -18,7 +18,7 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve('.runtime/browsers');
 const events:Record<string,any>[]=[];
 const diagnostics=new Diagnostics(record=>events.push(record));
 const config=loadConfig({...process.env,PENPOT_BASE_URL:targets.base,PENPOT_STORAGE_STATE:process.env.PENPOT_STORAGE_STATE || '.state/latest-session.json'});
-const adapter=new HeadlessAdapter(config,diagnostics), gateway=new Gateway(adapter,targets.base,1500,diagnostics);
+const adapter=new HeadlessAdapter(config,diagnostics), gateway=new DocumentWorker(adapter,targets.base,1500,diagnostics);
 const prefix='__reclaim_'+randomUUID()+':';
 const select=`penpotUtils.findShapes(s=>s.name.startsWith(${JSON.stringify(prefix)}))`;
 const summary=`const a=${select};return {count:a.length,sumX:a.reduce((n,s)=>n+s.x,0)};`;

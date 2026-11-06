@@ -7,7 +7,7 @@
 ## 執行範圍
 
 - 每組 gateway 對應一位已登入使用者與一個明確設定的 Penpot 站點。
-- 支援 workspace 檔案／頁面連結。自動開啟、連接 Plugin、依 handle 切檔，所有操作序列化。
+- 支援 workspace 檔案／頁面連結。自動開啟、連接 Plugin；不同檔案可平行執行，同檔案的所有頁面與 handles 共用依序執行的佇列。
 - 使用獨立官方 MCP sidecar；只轉送受管瀏覽器的 MCP WebSocket，不影響設計協作 WebSocket，也不依賴使用者原本的 MCP client token。
 - Session 過期會回傳 `AUTH_REQUIRED`，重新執行登入指令即可。SSO/MFA 的互動式登入尚未實作，可提供已授權的 Playwright storageState。
 - 分享／viewer 連結目前明確拒絕，避免誤升級成完整檔案權限。多使用者服務、跨站自動授權與純後端 API adapter 是下一階段。
@@ -59,17 +59,17 @@ MCP client 啟動命令可設定為 `docker`，arguments 為：
 | `execute_code(documentHandle, code, save?)` | 使用官方 Plugin API 執行 JavaScript；`save` 可選 `wait` 或 `deferred` |
 | `flush_document(documentHandle)` | 等待先前批次寫入完成儲存 |
 | `export_shape(documentHandle, shapeId, format, mode?)` | 回傳 PNG 圖片或 SVG 文字；`mode=fill` 匯出原始圖片填色（PNG） |
-| `close_document(documentHandle)` | 確認儲存並釋放 handle；最後一個 handle 關閉時釋放 browser |
+| `close_document(documentHandle)` | 確認儲存並釋放 handle；同檔最後一個 handle 關閉時釋放該檔 browser |
 | `high_level_overview()` | 官方操作概覽 |
 | `penpot_api_info(type, member?)` | 官方 API 文件 |
 
-先讀取概覽及所需 API 文件，再執行操作。每次工具呼叫都指定 handle，避免使用隱含的「目前分頁」。程式碼必須 `await` 自己啟動的工作，不要留下未等待的背景修改。Plugin 的 `storage` 會在切檔、閒置回收及恢復 browser 時重置，需延續使用的物件 ID 請由 client 保存。本次官方 sidecar 的工具清單不含本機路徑 `import_image`；圖片可透過 `execute_code` 與 Plugin media API 匯入。
+先讀取概覽及所需 API 文件，再執行操作。每次工具呼叫都指定 handle，避免使用隱含的「目前分頁」。程式碼必須 `await` 自己啟動的工作，不要留下未等待的背景修改。Plugin 的 `storage` 由同檔各 Agent 共用，會在 worker 回收及恢復 browser 時重置，需延續使用的物件 ID 請由 client 保存。本次官方 sidecar 的工具清單不含本機路徑 `import_image`；圖片可透過 `execute_code` 與 Plugin media API 匯入。
 
 切頁請呼叫 `open_page(handle, pageId)`，並使用回傳的 **新 handle**。它會先確認儲存，再透過目前 editor 切頁，不會重新載入瀏覽器分頁。建立頁面時先用 `execute_code` 回傳 `penpot.createPage()` 的 ID，再交給 `open_page`。若程式自行呼叫 `penpot.openPage`，下一次沿用原頁 handle 會回 `DOCUMENT_CONTEXT_CHANGED`，附上 `details.expected`／`details.actual`；該次使用者程式尚未執行。此時明確選擇頁面取得新 handle 即可，舊 handle 不會被靜默改綁。
 
-預設 `save: "wait"` 會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。高頻讀取或連續批次修改請用 `save: "deferred"`，避免每一筆都等待儲存；完成一批寫入後呼叫 `flush_document`。切檔、正常關閉與閒置回收也會等待儲存。
+預設 `save: "wait"` 會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。高頻讀取或連續批次修改請用 `save: "deferred"`，避免每一筆都等待儲存；完成一批寫入後呼叫 `flush_document`。切頁、worker 回收與正常關閉也會等待儲存。
 
-`close_document` 回傳 `browserReleased` 與 `remainingHandles`。關閉舊頁面的 handle 不會打斷其他 handle 使用的編輯器或清除 Plugin storage；最後一個 handle 關閉才回收整個瀏覽器。不再使用的 handles 應主動關閉。預設閒置 10 分鐘也會確認儲存並回收瀏覽器，保留 handles 供下次重新開檔；儲存未確認時保留編輯器，下一個閒置週期再檢查。
+`close_document` 回傳 `browserReleased`、`remainingFileHandles` 與全域的 `remainingHandles`。關閉舊頁面的 handle 不會打斷其他 handle 使用的編輯器或清除 Plugin storage；同檔最後一個 handle 關閉才回收該檔瀏覽器，其他檔案仍可繼續執行。不再使用的 handles 應主動關閉。預設閒置 10 分鐘也會確認儲存並回收瀏覽器，保留 handles 供下次重新開檔；儲存未確認時保留編輯器，下一個閒置週期再檢查。
 
 ```text
 open_document(url) → documentHandle
@@ -82,7 +82,9 @@ flush_document(documentHandle) → saved: true
 
 未確認寫入後若瀏覽器中斷或執行逾時，同檔案的既有 handle 會拒絕後續 `execute_code`／`flush_document`。`inspect_document` 仍可讀取文件資訊，並標記 `_meta.saveState: "unknown"`。請用 `open_document` 取得新 handle，讀回物件確認實際狀態，再決定是否補寫；其他檔案的 handle 可繼續使用。新 handle 不代表舊寫入已保存，確認後可關閉舊 handle。
 
-同一 worker 依序處理操作，最多接受 32 個執行中／排隊請求；超出會明確回傳 `BUSY`。一次程式碼可修改多個物件，通常比逐一呼叫工具有效率；大量讀取應只回傳需要的欄位及範圍。
+每個檔案的 worker 依序處理操作，最多接受 32 個執行中／排隊請求；全域最多 128 個請求與 128 個 handles，超量請求回傳 `BUSY`。預設 `PENPOT_MAX_WORKERS=2`，最多保留兩個瀏覽器，可設為 1–16。超過容量時，先確認儲存再回收最久未使用的閒置 worker；工作中的檔案不會被回收，所有候選檔案均無法確認儲存時回 `WORKER_CAPACITY`。
+
+多 Agent 請共用同一 HTTP endpoint。序列化以單次工具呼叫為單位，不會鎖住 Agent 的整段工作流程；依賴現值的讀取與修改應放進同一個 `execute_code`，或在寫入前檢查前置條件。各 Agent 應分配圖形範圍、使用不同的 storage key。一次程式碼可修改多個物件，通常比逐一呼叫工具有效率；大量讀取應只回傳需要的欄位及範圍。
 
 ## 本機開發
 
@@ -120,6 +122,7 @@ npm run test:pages
 npm run test:diagnostics
 npm run test:guidance
 npm run test:reclamation
+E2E_TARGETS_FILE=.state/latest-targets.json PENPOT_STORAGE_STATE=.state/latest-session.json npm run test:multi
 # 四項審查問題的故障回歸（需要額外的短逾時 sidecar）：
 docker compose -f test/compose.yaml --profile faults up -d penpot-mcp-timeout
 npm run test:lifecycle

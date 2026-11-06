@@ -42,7 +42,7 @@ try {
   assert.equal(data(b.result).result.fileId, targets.files[1].id);
   const reads = await Promise.all([a, b, a].map(doc => call('execute_code', { documentHandle: doc.documentHandle, code: `return {fileId:penpot.currentFile.id,count:penpotUtils.findShapes(s=>s.name===${JSON.stringify(marker)}).length};` })));
   assert.deepEqual(reads.map(r => data(r).result.fileId), [targets.files[0].id, targets.files[1].id, targets.files[0].id]);
-  assert.deepEqual(reads.map(r => data(r).result.count), [1,0,1]); check('concurrent requests serialize and persist across file switches');
+  assert.deepEqual(reads.map(r => data(r).result.count), [1,0,1]); check('concurrent requests retain file identity and persist across file workers');
   const exported = await call('export_shape', { documentHandle: a.documentHandle, shapeId: created.id, format: 'png' });
   const image = exported.content.find(c => c.type === 'image'); assert(image && image.type === 'image');
   const bytes = Buffer.from(image.data, 'base64'); assert.equal(bytes.subarray(1,4).toString(), 'PNG');

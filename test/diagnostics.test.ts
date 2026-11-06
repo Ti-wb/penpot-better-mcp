@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Diagnostics } from '../src/diagnostics.js';
-import { Gateway } from '../src/gateway.js';
+import { DocumentWorker } from '../src/document-worker.js';
 import { GatewayError } from '../src/errors.js';
 import type { DesignAdapter } from '../src/adapter.js';
 import { loadConfig } from '../src/config.js';
@@ -23,7 +23,7 @@ test('diagnostics separate queued time and nested phases without logging payload
     await diagnostics.span('saveMs', () => delay(5));
     return ok;
   });
-  const gateway = new Gateway(adapter, base, 600_000, diagnostics);
+  const gateway = new DocumentWorker(adapter, base, 600_000, diagnostics);
   try {
     const opened = await gateway.open(url);
     await Promise.all([gateway.execute(opened.documentHandle!, 'private-user-code'), gateway.execute(opened.documentHandle!, 'private-user-code')]);
@@ -45,7 +45,7 @@ test('diagnostics record overload and failures but never raw error messages', as
   let release!: () => void;
   const held = new Promise<void>(r => { release = r; });
   const adapter = fake(); adapter.execute = async () => { await held; throw new GatewayError('EXECUTION_UNKNOWN', 'secret-token', true); };
-  const gateway = new Gateway(adapter, base, 600_000, diagnostics);
+  const gateway = new DocumentWorker(adapter, base, 600_000, diagnostics);
   try {
     const opened = await gateway.open(url);
     const pending = Promise.allSettled(Array.from({length: 33}, () => gateway.execute(opened.documentHandle!, 'secret-code')));
