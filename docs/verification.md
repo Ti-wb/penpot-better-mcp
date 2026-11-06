@@ -94,3 +94,19 @@ Gateway 使用 Playwright 1.63.0 的官方容器映像，亦固定 digest。內�
 目前交付為單一使用者、單一站點的方案 A。已驗證 workspace 編輯器連結，沒有聲稱支援所有形式的 Penpot URL。分享／viewer 連結、跨站點自動登入、SSO/MFA 登入流程與多租戶隔離尚未完成。大量讀寫已測合成矩形；含大型圖片、元件與 Auto Layout 的複雜設計，以及多日持續運行仍未涵蓋。權限由實際登入帳號與 Penpot 判定，未另行實測團隊角色撤銷的每種情境。
 
 方案 C 目前提供 adapter 邊界與演進設計，尚未實作直接後端讀取。瀏覽器工具列、儲存指示器與 WebSocket 路徑是版本相依處；升級 Penpot 時應重跑以上真實驗收。
+
+## 多 Agent worker pool（2026-11-06）
+
+`npm run check`、`npm run build` 與 24 項單元／HTTP 回歸通過。新增測試包含同檔 URL 別名與 UUID 大小寫共用佇列、跨檔平行、LRU 與容量上限、儲存未確認拒絕回收、慢回收不阻擋其他常駐檔案、關閉已回收檔案不搶佔 slot、128 個 handle 的預留額度、每檔 32／全域 128 請求上限，以及 close/reopen/shutdown 競態。
+
+內網 2.18.5 與官方最新映像 2.18.6 的四 client 實測各 6 組通過；對照基準確認舊架構跨檔也依序執行，新架構不同檔案的執行區間確實重疊。每檔內的區間均不重疊、計數沒有遺失，冷重開確認資料持久化。量測與邊界見 [performance.md](performance.md)。本輪重新查詢 Docker Registry，四個官方 `latest` digest 與測試 Compose 固定值一致。
+
+最新版額外通過 5 組頁面測試與 5 組故障測試：交替舊頁 handle 保留 editor／storage，原有頁面防誤寫仍有效；檔案 A 的 browser／page 遺失或 sidecar timeout，不會關閉檔案 B 的 browser。A 的舊 handles 保留未知儲存狀態，逾時腳本與其後排隊寫入不會偷偷繼續執行。
+
+此處的序列化以一次工具呼叫為單位；跨呼叫的 Agent 計畫仍需前置條件與分工，不提供交易、跨 gateway 鎖或多租戶權限隔離。
+
+容量設為 1 的最新版四 client 實測也通過 6 組檢查，兩檔交替時實際觸發回收／重開，仍保留遞增結果、頁面歸屬與冷讀資料。正常容量下的 stdio E2E 另通過 7 組檢查，涵蓋原生寫入與 PNG 匯出；權限／語法錯誤恢復 3 組通過。紀錄分別為 `multi-latest-capacity1.json`、`workers-latest-e2e.json`、`guidance.json`。
+
+內網每檔 3,000 圖形的大量讀寫驗收通過 6 組檢查，包含 8 路讀取、24 次併發遞增、64 次突發請求、60 次連續全檔掃描、完整持久化與 6,000 個自建圖形清理。原始紀錄為 `load-workers-internal.json`；記憶體與延遲數字的解讀限制見效能報告。
+
+實際 Codex 使用的 Docker endpoint 已更新為每檔 worker（預設 2），並比對 5 個核心編譯檔案雜湊與工作區一致。關閉開發 sidecar 後，四 client 驗收 6 組及 HTTP／PNG E2E 7 組全數通過；包含大寫 file UUID 仍進入同檔佇列。120 個操作紀錄無錯誤，14 次 browser 啟動全部關閉、同時最多 2 個，最後沒有 Chromium 程序。所有本輪圖形與臨時頁面已冷讀確認清理；開發及最新版測試服務已停止，資料卷保留。現行 gateway 與 private upstream 維持運作。

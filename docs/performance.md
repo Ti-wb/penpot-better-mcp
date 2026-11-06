@@ -96,3 +96,35 @@ E2E_TARGETS_FILE=.state/acceptance-targets.json LOAD_PHASE=memory-fixed LOAD_MEM
 需自行指定有權限的專用測試 manifest；腳本要求兩個檔案名稱皆為 `Headless acceptance …`。每輪只處理自己的 `__better_mcp_load_v1__:` 圖形。預設會清理，`LOAD_KEEP_FIXTURE=1` 才保留。原始結果在未追蹤的 `test-results/load-*.json`；程式碼在 [test/load.ts](../test/load.ts)。
 
 這次確認的是上述資料量、工具呼叫與短時連續負載。沒有涵蓋長達數天的運行、多租戶、大型圖片／字型集合、所有 Plugin API 或任意大小檔案。較大的結構化查詢仍受 Plugin API 掃描成本影響；方案 C 的後端讀取、revision cache 與增量查詢，是後續可降低這項成本的方向。
+
+## 多 Agent 與每檔 worker（2026-11-06）
+
+四個獨立 SDK client／HTTP transport 模擬 Agent 送出 MCP 呼叫，沒有讓 LLM 思考時間影響量測。基準為 `0121378` 的單一全域佇列；新架構預設保留 2 個 browser。每次寫入有刻意等待再更新計數的區段，以確認同檔操作不交錯、跨檔執行時間確實重疊。
+
+| 內網 2.18.5，相同腳本 | 舊版 | 每檔 worker |
+|---|---:|---:|
+| 同檔，4 clients 共 16 次讀取後遞增與 160 圖形寫入 | 5.33 s | 5.40 s |
+| 同檔兩頁，4 clients 各寫 10 圖形 | 28.76 s | 13.62 s |
+| 兩檔，4 clients 共 8 次讀取後遞增與 80 圖形寫入 | 73.99 s | 4.23 s |
+
+跨檔加速主要來自不再反覆載入 editor；不能解讀為每次 Plugin 執行速度提升同樣倍數。這是各一輪量測，會受主機與後端負載影響。同檔仍依序執行；跨頁會先等儲存，因此寫入後切頁仍有儲存成本。
+
+最新官方映像 2.18.6 同一套測試亦通過：同檔 2.32 s、跨頁 11.74 s、兩檔 2.28 s。兩個環境皆確認計數、頁面歸屬、冷重開後的所有圖形數量，以及關閉檔案 A／斷開一個 client 不影響檔案 B。測試結束已清除所有自建圖形與頁面，並再次冷讀確認。
+
+原始紀錄為 `test-results/multi-baseline.json`、`multi-internal.json`、`multi-latest.json`。重跑使用 `E2E_TARGETS_FILE=... PENPOT_STORAGE_STATE=... npm run test:multi`；以 `MULTI_BASELINE_DIR` 指向舊版編譯目錄可比較舊架構。
+
+同輪內網 3,000 圖形／檔案的大量讀寫，Proxy 使用原生 Node HTTP，與官方 MCP 直連共用 sidecar；簡單讀取交錯量測，其餘操作依序量測。
+
+| 操作 | 每條路徑樣本數 | 官方直連 p50 | Proxy p50 |
+|---|---:|---:|---:|
+| 簡單讀取 | 30 | 2.45 ms | 5.76 ms |
+| 全量讀取 3,000 圖形 | 20 | 1,152.23 ms | 1,169.02 ms |
+| 每批更新 100 圖形 | 10 | 4,945.86 ms | 5,068.80 ms |
+
+這輪簡單讀取差約 3.31 ms；大量讀寫仍主要受 Plugin／編輯器處理時間影響。差值含主機與後端變動，不能全歸因於 worker pool。另測 3 輪 8 路讀取、24 次併發遞增、64 次突發請求與 60 次連續全檔掃描；報告為 `test-results/load-workers-internal.json`。
+
+這輪 64 個突發請求中，33 個完成、31 個明確回 `BUSY`；因請求陸續抵達時已有操作完成，接受總數可超過同時排隊上限 32。所有計數與座標加總在冷重開後一致，兩個檔案共 6,000 個自建圖形已清理並冷讀確認。
+
+記憶體不是固定不變：單檔 renderer heap 從建立 fixture 後的 366.9 MiB，於大量操作後暫增至 1,010 MiB，量測用 GC 後降至 236.7 MiB；該 browser 各程序 RSS 加總為 1,951.6 → 2,321.4 → 1,451.1 MiB，共享頁可能重複計入。Node 測試程序同時含直連與 Proxy client，RSS 由 221.3 降至 205.4 MiB，不能當成獨立 Gateway 的記憶體成本。正式執行不會強制 GC。這支持本輪暫存可被回收，沒有證明數天運行完全無洩漏；常駐 browser 數量則由 pool 上限約束。
+
+實際 Docker endpoint 的四 client 測試，跨檔 8 次操作為 4.03 s；另通過 PNG 匯出與冷重開。兩套驗收共記錄 120 個 Gateway 操作、0 個錯誤，14 次 browser 啟動皆對應關閉，同時最多 2 個。Docker 記憶體取樣峰值約 2,302 MiB，全部 Chromium 退出後約 393 MiB；最後 Node RSS 約 186 MiB，cgroup 另有約 235 MiB active file cache，Docker 用量不能直接當作 Node heap 或洩漏量。初始值是在 Playwright 尚未啟動前量測，也不適合作為暖機後的固定基線。紀錄為 `multi-docker.json`、`workers-docker-resources.json` 與 `multi-docker-memory.jsonl`。
