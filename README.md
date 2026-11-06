@@ -129,7 +129,7 @@ npm run check && npm test
 npm run build
 ```
 
-The detailed guides are currently in Traditional Chinese:
+Each guide is available in English and Traditional Chinese:
 
 - [Agent guide](docs/agent-guide.md): pages, batching, collaboration, and recovery.
 - [Architecture and diagnostics](docs/architecture.md): routing, persistence, logs, and extension points.

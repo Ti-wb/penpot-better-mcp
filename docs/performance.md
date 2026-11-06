@@ -1,7 +1,7 @@
-# 效能量測
+# Performance
 
-請依此版本 README 的測試步驟，使用專用、可拋棄的 fixture 比較讀寫與資源回收。站點、上游位址及 session 路徑由私人 `.env` 設定。
+Follow this revision's README to compare reads, writes, and reclamation using dedicated disposable fixtures. Configure the site, upstream addresses, and session path in a private `.env`.
 
-分別量測冷啟動、暖讀、批次寫入與儲存確認；同檔與跨檔負載須分開比較。確認圖形計數、冷重開持久化與測試資料清理，並分別記錄 Node、瀏覽器及容器記憶體。
+Measure cold startup, warm reads, batch writes, and save confirmation separately. Compare same-file and cross-file work independently. Verify shape counts, persistence after reopening, and fixture cleanup. Record Node, browser, and container memory separately.
 
-實際站點、部署版本、主機規格與原始量測只保存在已忽略的本機報告。短時合成負載不能作為通用容量、延遲或長期穩定性保證。
+Keep actual sites, deployment versions, host specifications, and raw measurements in ignored local reports. Short synthetic workloads are not universal capacity, latency, or long-term stability guarantees.
