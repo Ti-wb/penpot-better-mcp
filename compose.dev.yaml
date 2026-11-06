@@ -1,0 +1,11 @@
+name: penpot-better-mcp-dev
+services:
+  upstream:
+    image: penpotapp/mcp@sha256:08292a1e3b6e0993a6eae8f6b6f5cdce6aa69023327511400b3dc8dd0f69c8fa
+    ports:
+      - "127.0.0.1:14401:4401"
+      - "127.0.0.1:14402:4402"
+    environment:
+      PENPOT_MCP_SERVER_HOST: 0.0.0.0
+      PENPOT_MCP_REPL_ENABLE: "false"
+      PENPOT_MCP_LOG_LEVEL: error

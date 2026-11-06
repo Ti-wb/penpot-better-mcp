@@ -1,0 +1,113 @@
+# Penpot Better MCP
+
+讓 MCP client 只提供 Penpot 檔案連結，就能在 Linux VM 的 headless Chromium 中開檔、讀寫與匯出。使用者不需要維持瀏覽器分頁。
+
+第一版使用官方 MCP 與 Penpot 內建 Plugin。`DesignAdapter` 將編輯操作與 browser lifecycle 分開，之後可加入後端 API adapter，讓結構化查詢直接走 API。
+
+## 執行範圍
+
+- 每組 gateway 對應一位已登入使用者與一個明確設定的 Penpot 站點。
+- 支援 workspace 檔案／頁面連結。自動開啟、連接 Plugin、依 handle 切檔，所有操作序列化。
+- 使用獨立官方 MCP sidecar；只轉送受管瀏覽器的 MCP WebSocket，不影響設計協作 WebSocket，也不依賴使用者原本的 MCP client token。
+- Session 過期會回傳 `AUTH_REQUIRED`，重新執行登入指令即可。SSO/MFA 的互動式登入尚未實作，可提供已授權的 Playwright storageState。
+- 分享／viewer 連結目前明確拒絕，避免誤升級成完整檔案權限。多使用者服務、跨站自動授權與純後端 API adapter 是下一階段。
+
+驗收版本與實際結果見 [verification.md](docs/verification.md)。
+
+## 快速開始：Docker
+
+需要 Docker Compose 與 Node.js 22+（用於初始化本機 token）；不需要桌面、X server 或 `DISPLAY`。第一次登入需在自己的互動式 terminal 完成，密碼不會回顯，也不會寫到 shell history 或檔案。
+
+```bash
+# 建立 session 目錄及獨立的 gateway bearer token（不輸出 token）
+node scripts/init-state.mjs
+docker compose build gateway
+
+# 可在 headless VM 的 SSH terminal 操作；同時允許首次啟用此帳號的 MCP。
+docker compose run --rm auth --base-url https://penpot.example.com --enable-mcp
+
+docker compose up -d upstream gateway
+curl http://127.0.0.1:4545/healthz
+```
+
+若 VM 的使用者不是 UID/GID `1000:1000`，在 `.env` 設定 `LOCAL_UID`、`LOCAL_GID`。先登入產生 `.state/session.json` 才啟動 gateway。session 及 bearer token 權限為 `0600`；gateway 僅唯讀掛載 `.state`，Docker build context 與 Git 都排除該目錄。`--enable-mcp` 會在必要時啟用 MCP 及建立金鑰，不會輪替既有有效金鑰；若只要登入可省略此選項。
+
+MCP endpoint 為 `http://127.0.0.1:4545/mcp`，使用 Streamable HTTP，必須帶 `Authorization: Bearer <.state/gateway-token 的內容>`。此 token 代表該 gateway 的完整操作權限。保留 loopback binding；跨主機使用可透過 SSH tunnel。`/healthz` 只表示服務存活，不代表 Penpot session 仍有效。
+
+也可以用 stdio，不需將 bearer token 放進 MCP client 設定：
+
+```bash
+docker compose up -d upstream
+docker compose run --rm --no-deps -T gateway --stdio
+```
+
+MCP client 啟動命令可設定為 `docker`，arguments 為：
+
+```json
+["compose", "--project-directory", "/absolute/path/to/penpot-better-mcp", "run", "--rm", "--no-deps", "-T", "gateway", "--stdio"]
+```
+
+同一位使用者的多個獨立 gateway 有各自的檔案 handle，不會共用 browser。若共用一個 HTTP endpoint，請視為同一個可信任操作身分，不是多租戶服務。
+
+## MCP 操作
+
+| Tool | 用途 |
+|---|---|
+| `open_document(url)` | 開啟檔案，回傳 `documentHandle`、檔案資訊及頁面清單 |
+| `inspect_document(documentHandle)` | 讀取目前文件資訊 |
+| `execute_code(documentHandle, code)` | 使用官方 Plugin API 執行 JavaScript，可讀寫設計 |
+| `export_shape(documentHandle, shapeId, format)` | 回傳 PNG 或 SVG |
+| `close_document(documentHandle)` | 釋放 handle 與目前 browser；其他 handle 可重新開檔 |
+| `high_level_overview()` | 官方操作概覽 |
+| `penpot_api_info(type, member?)` | 官方 API 文件 |
+
+先讀取概覽及所需 API 文件，再執行操作。每次工具呼叫都指定 handle，避免使用隱含的「目前分頁」。程式碼必須 `await` 自己啟動的工作，不要留下未等待的背景修改。Plugin 的 `storage` 會在切檔、閒置回收及恢復 browser 時重置，需延續使用的物件 ID 請由 client 保存。上游讀取本機路徑的 `import_image` helper 尚未轉送；圖片可透過 `execute_code` 與 Plugin media API 匯入。
+
+執行後會等待編輯器穩定顯示 saved，並確認沒有未完成或失敗的儲存請求，避免讀到前一次儲存的狀態。這不是跨系統交易保證。`EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED` 表示結果不確定，應先檢查文件，**不要直接重送寫入**。任意 JavaScript 可能在失敗前完成部分修改。
+
+## 本機開發
+
+```bash
+npm ci
+npm run browser:install
+npm run init
+npm run auth -- --base-url https://penpot.example.com
+npm run build
+npm test
+```
+
+本機 Node 執行需要可連線的私有 MCP sidecar。使用 `compose.dev.yaml` 提供僅 loopback 可達的 HTTP / WebSocket：
+
+```bash
+docker compose -f compose.dev.yaml up -d
+npm run dev -- --stdio
+# HTTP 開發：npm run dev -- --http（預設 127.0.0.1:3000）
+```
+
+可用環境設定見 [.env.example](.env.example)。Node 不會隱式載入 `.env`；使用 shell 環境或 `node --env-file=.env dist/main.js`。Compose 會讀取 `.env`。
+
+## 測試與停止
+
+```bash
+npm run check
+npm test
+docker compose -f test/compose.yaml up -d
+# 最新映像的本機 fixture 建立與完整驗收：
+npm run fixture:setup
+E2E_TARGETS_FILE=.state/latest-targets.json PENPOT_STORAGE_STATE=.state/latest-session.json E2E_REPORT=latest.json npm run test:e2e
+npm run test:recovery
+
+docker compose down
+docker compose -f compose.dev.yaml down
+docker compose -f test/compose.yaml down
+```
+
+測試 Compose 的映像固定為本次從官方 `latest` 拉取的 2.18.6 digest；重新驗證新版本時應一起更新 frontend、backend、exporter、MCP。測試帳號與簡化驗證設定只用於 loopback fixture，不能作為正式站設定。
+
+原生測試需要先啟動 `compose.dev.yaml` 的 sidecar。驗收 Docker gateway 時，可在 `test:e2e` 加上 `E2E_HTTP_URL=http://127.0.0.1:4545/mcp`，並指定與 gateway 站點相符的 `E2E_TARGETS_FILE`；測試會從本機 token 檔讀取授權，不會將 token 印出。
+
+`down` 保留測試資料卷。只有要重置這個隔離 fixture 時才使用 `docker compose -f test/compose.yaml down -v`。內網驗收必須使用明確指定、名稱為 `Headless acceptance …` 的測試檔 manifest；不會自動搜尋或修改正式檔案。結果與截圖保存在未追蹤的 `test-results/`。
+
+## 架構與後續
+
+詳見 [architecture.md](docs/architecture.md)。官方 MCP 仍在瀏覽器 Plugin 中執行；本專案管理登入、開檔、連線路由與回收。它沒有繞過 Penpot 的檔案權限，也沒有將 MCP token 當作後端 PAT 使用。
