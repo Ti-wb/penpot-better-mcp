@@ -8,6 +8,7 @@
 |---|---|---|
 | Linux VM headless、自動開檔與 MCP 連線 | 已實作、實測 | 內網 2.18.5、隔離最新映像 2.18.6 |
 | 檔案／頁面 handle、跨檔序列化 | 已實作 | 原生與 Docker E2E；大量切檔另見效能報告 |
+| 同檔切頁 | 已實作、實測 | `open_page` 回傳新的頁面 handle，保留編輯器及 Plugin storage；誤用頁面回傳結構化錯誤 |
 | 通用 Plugin API 讀寫 | 已轉送官方執行環境 | 矩形大量建立／更新／刪除已測，不等於每個 Plugin API 方法都逐一驗過 |
 | 官方概覽、型別／成員文件 | 已實作、實測 | 使用實際官方 sidecar |
 | PNG／SVG、原始圖片填色匯出 | 已實作、實測 | PNG 格式／尺寸、SVG XML 與 `mode=fill` 原始尺寸 |

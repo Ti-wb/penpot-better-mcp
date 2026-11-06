@@ -17,6 +17,7 @@
     "test:recovery": "tsx test/recovery.ts",
     "test:batch": "tsx test/batch.ts",
     "test:lifecycle": "tsx test/lifecycle.ts",
+    "test:pages": "tsx test/pages.ts",
     "test:load": "tsx test/load.ts",
     "auth": "tsx src/auth-cli.ts",
     "init": "node scripts/init-state.mjs",

@@ -13,11 +13,15 @@ export function createMcpServer(gateway: Gateway) {
     try { return await fn(args); } catch (error) { return { ...json(publicError(error)), isError: true }; }
   };
   const handle = { documentHandle: z.string().uuid() };
-  server.registerTool('open_document', { description: 'Open an editor file URL in a managed headless browser. Returns a handle bound to this file.', inputSchema: { url: z.string().max(4096) }, annotations: { readOnlyHint: true, openWorldHint: true } }, safe(async args => {
+  server.registerTool('open_document', { description: 'Open an editor file URL in a managed headless browser. Returns a handle bound to the file and to page-id when the URL specifies it. Use open_page to select another page with a new handle.', inputSchema: { url: z.string().max(4096) }, annotations: { readOnlyHint: true, openWorldHint: true } }, safe(async args => {
     const opened = await gateway.open(args.url);
     return { ...json(opened), ...(opened.result.isError ? { isError: true } : {}) };
   }));
   server.registerTool('inspect_document', { description: 'Read current file identity and page list.', inputSchema: handle, annotations: { readOnlyHint: true } }, safe(args => gateway.inspect(args.documentHandle)));
+  server.registerTool('open_page', { description: 'Select a page in the same file and return a NEW page-bound documentHandle. Flushes prior edits and reuses the editor. Old handles keep their original target. Use this after createPage; avoid navigating with penpot.openPage inside execute_code.', inputSchema: { ...handle, pageId: z.string().uuid() }, annotations: { readOnlyHint: true } }, safe(async args => {
+    const opened = await gateway.openPage(args.documentHandle, args.pageId);
+    return { ...json(opened), ...(opened.result.isError ? { isError: true } : {}) };
+  }));
   server.registerTool('execute_code', { description: 'Execute official Penpot Plugin API JavaScript in the specified file. May edit designs. Default save=wait confirms persistence. For frequent reads or batched writes, use save=deferred to return immediately after execution, then flush_document after the write batch. Deferred success does not confirm persistence. Never retry uncertain edits blindly.', inputSchema: { ...handle, code: z.string().min(1).max(100_000), save: z.enum(['wait','deferred']).default('wait') }, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } }, safe(args => gateway.execute(args.documentHandle, args.code, args.save)));
   server.registerTool('flush_document', { description: 'Wait for prior deferred edits to finish saving before reporting a batch complete. File switching and normal close also flush automatically.', inputSchema: handle }, safe(args => gateway.flush(args.documentHandle)));
   server.registerTool('export_shape', { description: 'Export a shape, selection or page through the official MCP tool. mode=fill returns the original image fill (PNG only); shape is the default. SVG is returned as text.', inputSchema: { ...handle, shapeId: z.union([z.string().uuid(),z.enum(['page','selection'])]), format: z.enum(['png', 'svg']).default('png'), mode: z.enum(['shape','fill']).default('shape') }, annotations: { readOnlyHint: true } }, safe(args => {

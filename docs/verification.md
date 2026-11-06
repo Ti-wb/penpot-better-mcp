@@ -48,6 +48,12 @@ Docker gateway 的官方 `high_level_overview` 與 `penpot_api_info` 轉送也�
 
 未確認不代表一定沒有寫入：只關閉頁面時，Penpot 仍可能完成最後一次儲存。錯誤後必須透過新 handle 讀回實際結果，不能以重新連線成功推論舊寫入已保存。
 
+## 實際設計觀察後的改善
+
+切頁改善以 `npm run test:pages` 在最新 2.18.6 fixture 通過四組驗證：12 次同檔切頁沿用瀏覽器、編輯器與 Plugin storage；不存在頁面保持原頁；直接呼叫 Plugin 切頁後，錯誤 handle 的下一次程式碼在執行前被拒絕，並可透過 `open_page` 恢復；延後寫入經切頁及冷重開仍存在。首輪有待儲存工作時為 802 ms，其餘切頁為 21–28 ms。紀錄為 `test-results/pages.json`。
+
+同輪單元與 HTTP 協定回歸共 9 項通過。重新查詢官方 `latest`，四個映像 digest 仍與下表一致。
+
 ## 映像版本
 
 本次先從官方拉取 `latest`，再固定為實際取得的 2.18.6 digest；沒有沿用本機舊 Penpot 映像。完整 digest 見 [test/compose.yaml](../test/compose.yaml) 與 [compose.yaml](../compose.yaml)。

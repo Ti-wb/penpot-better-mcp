@@ -3,6 +3,15 @@ import { GatewayError } from './errors.js';
 export interface DocumentTarget { url: string; fileId: string; pageId?: string; }
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
+export function targetPage(target: DocumentTarget, pageId: string): DocumentTarget {
+  if (!uuid.test(pageId)) throw new GatewayError('INVALID_PAGE', 'Expected a page UUID.');
+  const url = new URL(target.url);
+  const [path, query] = url.hash.slice(1).split('?');
+  const params = new URLSearchParams(query); params.set('page-id', pageId);
+  url.hash = path + '?' + params;
+  return { url: url.href, fileId: target.fileId, pageId };
+}
+
 export function parseDocument(input: string, baseUrl: string): DocumentTarget {
   let url: URL;
   try { url = new URL(input); } catch { throw new GatewayError('INVALID_URL', 'Expected an absolute Penpot file URL.'); }
