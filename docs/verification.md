@@ -110,3 +110,22 @@ Gateway 使用 Playwright 1.63.0 的官方容器映像，亦固定 digest。內�
 內網每檔 3,000 圖形的大量讀寫驗收通過 6 組檢查，包含 8 路讀取、24 次併發遞增、64 次突發請求、60 次連續全檔掃描、完整持久化與 6,000 個自建圖形清理。原始紀錄為 `load-workers-internal.json`；記憶體與延遲數字的解讀限制見效能報告。
 
 實際 Codex 使用的 Docker endpoint 已更新為每檔 worker（預設 2），並比對 5 個核心編譯檔案雜湊與工作區一致。關閉開發 sidecar 後，四 client 驗收 6 組及 HTTP／PNG E2E 7 組全數通過；包含大寫 file UUID 仍進入同檔佇列。120 個操作紀錄無錯誤，14 次 browser 啟動全部關閉、同時最多 2 個，最後沒有 Chromium 程序。所有本輪圖形與臨時頁面已冷讀確認清理；開發及最新版測試服務已停止，資料卷保留。現行 gateway 與 private upstream 維持運作。
+
+## 多 Agent 版本的獨立 Code Review（2026-11-06）
+
+以 `3c3c04a` 為基準重新檢查原始碼、資源所有權、排程與程序關機流程，確認以下四項可重現問題，已在 `ed7991c` 修復：
+
+| 優先度與位置 | 觸發條件及修復 |
+|---|---|
+| P1：`src/main.ts` 關機失敗中止恢復 | 舊版先關 HTTP listener，儲存失敗又造成未處理的 Promise rejection，程序以非零狀態退出。現在先完成工作與儲存，再關閉傳輸；失敗時保留未關閉的 editor 與恢復入口，每 5 秒重試。 |
+| P1：`src/headless-adapter.ts` 訊號處理提前終止瀏覽器 | 實測在 12 秒寫入途中送出 SIGTERM，Playwright 預設處理先關閉 Chromium，導致 `EXECUTION_UNKNOWN`。現在停用 Playwright 的自動訊號處理，由 Gateway 統一完成排隊工作與儲存後退出；Compose 關機等待預設為 5 分鐘。 |
+| P2：`src/worker-pool.ts` 已回收資源仍占容量 | 容量為 1 時，檔案 A 的 browser 已遺失且儲存未知；close 釋放資源後仍拋錯，造成 B 誤報 `WORKER_CAPACITY`。現在透過 adapter 的 `hasResources` 釋放容量，同時保留 A 舊 handles 的未知儲存狀態。 |
+| P2：`src/worker-pool.ts` 慢回收阻塞其他待開檔案 | 全域分配流程等待一次慢 close，其他可用 slot 也無法交給等待中的檔案。現在讓回收獨立進行，僅按等待需求回收；同檔仍序列化，也不會多關閉沒有必要回收的暖機 browser。 |
+
+兩項排程回歸在修正前均失敗，修正後通過；目前共 28 項單元／HTTP 測試通過，型別檢查、建置及 Docker 映像建置亦通過。沒有增加正常讀寫的 MCP 往返。
+
+最新版 2.18.6 fixture 的 `test:lifecycle` 通過 6 組故障測試，包含容量 1 的真實 browser loss。新增 `test:shutdown` 啟動真正的 HTTP 子程序，執行 12 秒寫入並連續送出兩次 SIGTERM；測試只注入一次關閉時的 `SAVE_UNCONFIRMED`，確認寫入回應送達、原 editor／handle 可讀、5 秒後自動重試並正常退出、冷重開仍有寫入，以及清理自身圖形，共 5 項通過。原始程式在這個訊號情境會提前失去 browser，修正後通過。
+
+內網 2.18.5 與最新版 2.18.6 的原生四 client 測試各 6 項通過；最新版 stdio／PNG E2E 另通過 7 項。紀錄為 `review-multi-internal.json`、`review-multi-latest.json`、`review-stdio-latest.json`、`lifecycle.json` 與 `shutdown-review.json`。本輪聚焦故障、競態及多 client 回歸，沒有重跑前一節的 6,000 圖形效能對照；長時間負載與外部強制終止的限制仍適用。
+
+實際 Codex Docker endpoint 已部署 `ed7991c`，7 個核心編譯檔雜湊一致，關機等待為 300 秒。部署後內網四 client 的 6 組驗收全數通過，跨檔操作為 4.04 秒；104 個操作沒有錯誤，11 次 browser 啟動均正常關閉、同時最多 2 個，沒有非預期 editor 遺失。測試圖形及頁面已清理並冷重開確認，最後沒有 Chromium 殘留。容器 healthy、零重啟；開發／最新版測試服務已停止，資料卷保留。證據為 `review-multi-docker.json` 與 `deployment-review.json`。
