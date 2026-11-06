@@ -1,36 +1,38 @@
-# Agent 操作指引
+# Agent guide
 
-MCP 初始化與 `high_level_overview` 都提供相同核心指引。以下為完整工作流程。
+**English** | [繁體中文](agent-guide.zh-TW.md) | [README](../README.md)
 
-1. `open_document({url})` 取得 handle，必要時 `inspect_document` 讀頁面清單。Proxy 自行啟動 headless 編輯器。
-2. `open_page({documentHandle, pageId})` 切頁，改用回傳的新 handle；不再使用的舊 handle 要關閉。建立頁面時先以 `execute_code` 執行 `const p = penpot.createPage(); p.name = "Draft"; return p.id;`，再交給 `open_page`。不要在設計腳本中直接導航。
-3. 讀取相關 API 文件，先讀現況，再以小批次修改。單檔高頻工作可從每批 100 個圖形開始，視耗時與資料大小調整。查詢只回傳所需欄位或摘要，避免每一步重新列出整份文件。
-4. 連續操作可用 `save: "deferred"`；批次完成、交接或收尾前執行 `flush_document`。預設 `save: "wait"` 則逐次確認。不要把 deferred 成功當成已儲存。
-5. 讀回重要計數／ID／修改結果，再關閉不需要的 handles。所有非同步修改都應在腳本內 `await`，避免回傳後仍有背景寫入。
+MCP initialization and `high_level_overview` provide the same core instructions.
 
-文件與頁面 target 綁定在 handle 上。`open_page` 保留同一編輯器的 Plugin storage；worker 容量回收、閒置回收、故障重建會清空暫存，所以重要 ID 與批次進度應由呼叫端保存。每次 `open_page` 都產生新 handle，不要任由它們累積到 128 個上限。
+## Workflow
 
-關閉已被取代的 handle 會確認當前待儲存工作，但保留其他 handle 正在使用的編輯器；同檔最後一個 handle 關閉才退出該檔瀏覽器，其他檔案保持可用。可用回傳的 `browserReleased`、`remainingFileHandles` 與全域 `remainingHandles` 確認收尾狀態。預設 10 分鐘閒置回收會退出瀏覽器，下一次呼叫可用原 handle 重新載入。
+1. Call `open_document({url})` to obtain a handle; use `inspect_document` for the page list. The gateway starts the headless editor.
+2. Call `open_page({documentHandle, pageId})` and use its new handle. To create a page, first execute `const p = penpot.createPage(); p.name = "Draft"; return p.id;`, then pass its ID to `open_page`. Do not navigate inside design scripts.
+3. Read the relevant API documentation and existing design before editing. Start with batches of about 100 shapes for frequent writes, then adjust to the workload. Return only needed fields or summaries.
+4. Use `save: "deferred"` for consecutive operations, then `flush_document` before completing or handing off a write batch. Default `save: "wait"` confirms each call; deferred success only confirms execution.
+5. Read back important IDs, counts, and changes; close unused handles. Always `await` asynchronous modifications inside the script.
 
-## 多 Agent 協作
+Handles retain their file and page targets. Each `open_page` creates a new handle; close superseded ones to stay below the 128-handle limit. Page switching preserves Plugin storage, but eviction, idle reclamation, and recovery clear it. Keep important IDs and progress in the client.
 
-請連到同一個 HTTP endpoint。不同檔案各有 worker，可在容量內真正平行；同檔各頁面共用一條佇列。預設最多保留 2 個 browser，超過後先確認儲存再回收閒置 worker。個別 client 斷線不會關閉其他 client 的 handle；不用的 handle 仍應明確關閉。獨立 stdio／gateway processes 之間沒有共享鎖。
+Closing a handle confirms pending saves and keeps the editor while other handles use that file. The last close releases its browser; check `browserReleased`, `remainingFileHandles`, and global `remainingHandles`. Default ten-minute idle reclamation also closes the browser; a retained handle reopens it on the next call.
 
-佇列只保護單次呼叫，不會鎖住一整段 Agent 工作流程。若兩個 Agent 分別讀取 `x=0`，之後各寫 `x=1`，結果仍然只有 1。把依賴現值的「讀、算、寫」放在同一段 `execute_code`，或寫入前確認現值仍等於規劃時的值，否則停止並重新讀取。即使腳本失敗，也可能已有部分修改；這不是資料庫交易。
+## Multiple agents
 
-同檔 Agents 共用 Plugin storage，請使用各自的 key 前綴，並分配圖形／頁面編輯範圍。人類或另一個 gateway 的編輯不受這條佇列保護。
+Connect all agents to the **same HTTP endpoint**. Different files run in parallel within browser capacity, while all pages of one file share a queue. The default pool holds two browsers and reclaims idle files after confirming saves. A client disconnect does not close other clients' handles. Separate gateway or stdio processes do not share locks.
 
-## 權限與錯誤
+The queue protects individual calls, not a whole workflow. Two agents can both read `x=0` and later write `x=1`, losing an increment. Put dependent read/compute/write steps in one `execute_code`, or verify the current value before writing and stop if it changed. Scripts can partially modify a design before failing; they are not transactions.
 
-| 回應 | 處理方式 |
+Agents editing one file share Plugin storage. Use separate key prefixes and agree on shape/page ownership. Human editors and other gateways are outside this queue.
+
+## Permissions and errors
+
+| Response | Action |
 |---|---|
-| `DOCUMENT_CONTEXT_CHANGED` | 該次使用者程式碼尚未執行；明確呼叫 `open_page` 或 `open_document`，使用新 handle |
-| `PLUGIN_PERMISSION_DENIED` | 看 `permission` 欄位；停止重試受限 API，設計內容存取是否可用要分開判斷。腳本可能已完成前段修改，應先讀回 |
-| `SCRIPT_SYNTAX_ERROR` | 依 `details.upstreamMessage` 保留的原始錯誤修正 JavaScript，縮小腳本並檢查括號／字串。此類別也可能是執行時拋出的 SyntaxError，不能假定全部修改都未發生 |
-| `EXECUTION_UNKNOWN`／`SAVE_UNCONFIRMED` | 不重送寫入；重新 open 取得 fresh handle，讀回已保存的資料後再調整。新 handle 成功不會替舊寫入背書 |
-| `WORKER_CAPACITY` | 其他檔案無法確認儲存，無法安全回收；先處理那些檔案的儲存狀態，新呼叫的設計程式尚未執行 |
-| `BUSY` | 等待已有操作完成，再降低併發；每檔超過 32 筆或全域超過 128 筆接受中的操作會拒絕 |
+| `DOCUMENT_CONTEXT_CHANGED` | This call's user code has not run. Use `open_page` or `open_document` and the new handle. |
+| `PLUGIN_PERMISSION_DENIED` | Check `permission` and stop retrying the restricted API. Earlier script steps may have changed the design; read back first. |
+| `SCRIPT_SYNTAX_ERROR` | Use `details.upstreamMessage` to correct the script. A runtime-thrown SyntaxError can occur after edits, so do not assume nothing changed. |
+| `EXECUTION_UNKNOWN` / `SAVE_UNCONFIRMED` | Do not replay writes. Open a fresh handle and inspect saved data; a successful new handle does not confirm the old write. |
+| `WORKER_CAPACITY` | Other files cannot confirm saves and cannot be reclaimed safely. Resolve their save state first; this call's design code has not run. |
+| `BUSY` | Wait for pending work and reduce concurrency. Limits are 32 accepted operations per file and 128 globally. |
 
-API 文件不是權限清單。已驗證的內網 2.18.5 及隔離映像 2.18.6 的內建 MCP Plugin，實測 `activeUsers` 都回報缺少 `user:read`。不要因外掛 manifest 或原始碼列出權限，就宣稱部署已授予。一般設計不需要讀取使用者名單，請省略 `currentUser`／`activeUsers` 探測。Proxy 不替外掛擴權，檔案存取仍由登入帳號與 Penpot 決定。升級後應重跑 `npm run test:editor`；若權限能力改變，測試會要求更新指引。
-
-任意 JavaScript 不是交易，工具失敗也可能已有部分修改。執行較短、目的單一的片段，將建立結果 ID 留在呼叫端，先檢查再重試。此 worker 是一個帳號的可信任工作環境，尚未提供多租戶隔離或方案 C 的直接後端讀寫。
+API documentation does not grant permissions. The tested built-in plugins on Penpot 2.18.5 and 2.18.6 deny `activeUsers` because `user:read` is missing. Avoid probing `currentUser` / `activeUsers` for ordinary design work. The gateway does not expand plugin permissions; rerun `npm run test:editor` after upgrades to check for changes.

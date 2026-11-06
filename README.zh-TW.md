@@ -25,7 +25,7 @@ Penpot Better MCP 在官方 Penpot MCP 之上，加入自動開檔與切檔、�
 
 **執行這支程式的電腦會自動啟動 headless Chromium。** 主機需要負擔完整 Penpot 編輯器的 CPU 與記憶體用量。大型檔案、圖片及更多同時開啟的檔案都會增加資源需求；瀏覽器池限制的是數量，並不限制每個編輯器的記憶體。
 
-請預留數 GiB 的可用記憶體與 CPU 餘裕。既有四 client／PNG 測試中，**Gateway 容器峰值約為 2.3 GiB**；這是特定負載的觀測值，並非最低需求或用量上限。量測方式與限制詳見[效能摘要](docs/performance.md)。
+請預留數 GiB 的可用記憶體與 CPU 餘裕。既有四 client／PNG 測試中，**Gateway 容器峰值約為 2.3 GiB**；這是特定負載的觀測值，並非最低需求或用量上限。量測方式與限制詳見[效能摘要](docs/performance.zh-TW.md)。
 
 預設最多保留兩個檔案的瀏覽器。較小的 VM，或以單一大型檔案為主時，可先設 `PENPOT_MAX_WORKERS=1`。調高可增加同時處理的檔案數，但不會讓同檔案的呼叫平行執行。預設閒置十分鐘後回收瀏覽器，需要時再自動開啟。
 
@@ -112,7 +112,7 @@ docker compose up -d --force-recreate gateway
 
 先開啟文件、閱讀相關 API 指引並查看現有設計，再進行範圍明確的修改。`execute_code` 預設 `save="wait"`。高頻讀取或批次寫入可用 `save="deferred"`，省去逐次等待儲存確認的時間，寫入批次結束時再呼叫 `flush_document`。Deferred 回覆只表示執行完成，不代表已儲存。
 
-多 Agent 作業時，將彼此相依的「讀取、計算、寫入」放在同一次 `execute_code`。排程保護的是單次呼叫，不是整段 Agent 工作流程，也不提供交易保證；人類或其他 Gateway 的編輯不受這條佇列保護。遇到 `EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED`，先用新 handle 讀回確認，再決定後續處理，不要直接重送寫入。詳見 [Agent 指引](docs/agent-guide.md)。
+多 Agent 作業時，將彼此相依的「讀取、計算、寫入」放在同一次 `execute_code`。排程保護的是單次呼叫，不是整段 Agent 工作流程，也不提供交易保證；人類或其他 Gateway 的編輯不受這條佇列保護。遇到 `EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED`，先用新 handle 讀回確認，再決定後續處理，不要直接重送寫入。詳見 [Agent 指引](docs/agent-guide.zh-TW.md)。
 
 ## 目前範圍
 
@@ -129,9 +129,9 @@ npm run check && npm test
 npm run build
 ```
 
-詳細指南目前以繁體中文提供：
+詳細指南提供英文與繁體中文，可在各頁切換：
 
-- [Agent 指引](docs/agent-guide.md)：頁面、批次處理、協作與恢復。
-- [架構與診斷](docs/architecture.md)：路由、持久化、紀錄與擴充方向。
-- [測試指南](docs/testing.md)：隔離 fixture、真實站點驗收與覆蓋邊界。
-- [效能摘要](docs/performance.md)：讀寫開銷、併發與資源量測。
+- [Agent 指引](docs/agent-guide.zh-TW.md)：頁面、批次處理、協作與恢復。
+- [架構與診斷](docs/architecture.zh-TW.md)：路由、持久化、紀錄與擴充方向。
+- [測試指南](docs/testing.zh-TW.md)：隔離 fixture、真實站點驗收與覆蓋邊界。
+- [效能摘要](docs/performance.zh-TW.md)：讀寫開銷、併發與資源量測。
