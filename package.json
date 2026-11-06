@@ -1,0 +1,37 @@
+{
+  "name": "penpot-better-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless Penpot MCP gateway with a managed browser adapter",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts",
+    "check": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "test:e2e": "tsx test/e2e.ts",
+    "test:recovery": "tsx test/recovery.ts",
+    "auth": "tsx src/auth-cli.ts",
+    "init": "node scripts/init-state.mjs",
+    "browser:install": "PLAYWRIGHT_BROWSERS_PATH=.runtime/browsers playwright install chromium",
+    "fixture:setup": "tsx test/setup-fixture.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "express": "5.1.0",
+    "playwright": "1.63.0",
+    "ws": "8.22.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.3",
+    "@types/node": "22.19.0",
+    "@types/ws": "8.18.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}

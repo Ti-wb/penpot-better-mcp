@@ -1,0 +1,39 @@
+name: penpot-better-mcp
+services:
+  upstream:
+    image: penpotapp/mcp@sha256:08292a1e3b6e0993a6eae8f6b6f5cdce6aa69023327511400b3dc8dd0f69c8fa
+    environment:
+      PENPOT_MCP_SERVER_HOST: 0.0.0.0
+      PENPOT_MCP_REPL_ENABLE: "false"
+      PENPOT_MCP_LOG_LEVEL: error
+    restart: unless-stopped
+  gateway:
+    image: penpot-better-mcp:local
+    build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    init: true
+    shm_size: 1gb
+    ports: ["127.0.0.1:${GATEWAY_PORT:-4545}:3000"]
+    environment:
+      PENPOT_BASE_URL: ${PENPOT_BASE_URL:-https://penpot.example.com}
+      PENPOT_STORAGE_STATE: /app/.state/session.json
+      PENPOT_UPSTREAM_HTTP: http://upstream:4401/mcp
+      PENPOT_UPSTREAM_WS: ws://upstream:4402
+      GATEWAY_TOKEN_FILE: /app/.state/gateway-token
+      HOST: 0.0.0.0
+    volumes: ["./.state:/app/.state:ro"]
+    depends_on: [upstream]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  auth:
+    image: penpot-better-mcp:local
+    profiles: [tools]
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    entrypoint: ["node", "dist/auth-cli.js"]
+    stdin_open: true
+    tty: true
+    volumes: ["./.state:/app/.state"]
