@@ -1,89 +1,132 @@
-import { randomUUID } from 'node:crypto';
 import type { DesignAdapter, ExportOptions, SaveMode } from './adapter.js';
-import { parseDocument, targetPage, type DocumentTarget } from './document.js';
-import { GatewayError } from './errors.js';
+import { DocumentWorker } from './document-worker.js';
+import { parseDocument } from './document.js';
 import { Diagnostics, type Operation } from './diagnostics.js';
+import { GatewayError } from './errors.js';
+import { WorkerPool } from './worker-pool.js';
 
-export class Gateway {
-  private readonly documents = new Map<string, DocumentTarget>();
-  private queue: Promise<unknown> = Promise.resolve();
+export type GatewayApi = Pick<DocumentWorker, 'open' | 'openPage' | 'inspect' | 'execute' | 'flush' | 'export' | 'documentation' | 'closeDocument' | 'shutdown'>;
+interface Entry { fileId: string; worker: DocumentWorker; pending: number; disposing?: Promise<void>; }
+
+/** One queue/adapter per file, sharing a bounded warm-browser pool. */
+export class Gateway implements GatewayApi {
+  private readonly workers = new Map<string, Entry>();
+  private readonly handles = new Map<string, Entry>();
+  private readonly adapters = new WeakSet<DesignAdapter>();
+  private readonly pool: WorkerPool;
+  private docs?: DocumentWorker;
   private pending = 0;
-  private idle?: NodeJS.Timeout;
+  private opening = 0;
   private stopping = false;
-  constructor(private readonly adapter: DesignAdapter, private readonly baseUrl: string, private readonly idleMs = 600_000, private readonly diagnostics = new Diagnostics()) {}
-
-  private serial<T>(operation: Operation, task: () => Promise<T>): Promise<T> {
-    if (this.stopping) return Promise.reject(new GatewayError('SHUTTING_DOWN', 'The worker is shutting down.'));
-    if (this.pending >= 32) { this.diagnostics.busy(operation, this.pending); return Promise.reject(new GatewayError('BUSY', 'The worker queue is full; retry later.')); }
-    const queuedAt = performance.now(), queuedAhead = this.pending;
-    clearTimeout(this.idle); this.pending++;
-    const result = this.queue.then(async () => {
-      try { return await this.diagnostics.run(operation, queuedAt, queuedAhead, task); }
-      finally {
-        this.pending--;
-        this.scheduleIdle();
-      }
+  private drained?: () => void;
+  private closing?: Promise<void>;
+  constructor(private readonly createAdapter: (fileId?: string) => DesignAdapter, private readonly baseUrl: string,
+    private readonly idleMs = 600_000, private readonly diagnostics = new Diagnostics(), maxWorkers = 2) {
+    this.pool = new WorkerPool(maxWorkers, diagnostics);
+  }
+  private adapter(fileId?: string) {
+    const adapter = this.createAdapter(fileId);
+    if (this.adapters.has(adapter)) throw new Error('The adapter factory must return a distinct adapter for every worker');
+    this.adapters.add(adapter); return adapter;
+  }
+  private create(fileId: string): Entry {
+    const adapter = this.adapter(fileId);
+    const entry = { fileId, pending: 0, worker: new DocumentWorker(adapter, this.baseUrl, this.idleMs, this.diagnostics,
+      this.pool.register(() => adapter.close(), () => adapter.hasResources)) };
+    this.workers.set(fileId, entry); return entry;
+  }
+  private reject<T>(operation: Operation, error: unknown): Promise<T> {
+    return this.diagnostics.run(operation, performance.now(), this.pending, () => Promise.reject(error));
+  }
+  private async admit<T>(operation: Operation, task: () => Promise<T>): Promise<T> {
+    if (this.stopping) return this.reject(operation, new GatewayError('SHUTTING_DOWN', 'The gateway is shutting down.'));
+    if (this.pending >= 128) { this.diagnostics.busy(operation, this.pending); throw new GatewayError('BUSY', 'The gateway queue is full; retry later.'); }
+    this.pending++;
+    try { return await task(); }
+    finally { this.pending--; if (!this.pending) { this.drained?.(); this.drained = undefined; } }
+  }
+  private dispatch<T>(operation: Operation, getEntry: () => Entry, task: (entry: Entry) => Promise<T>): Promise<T> {
+    return this.admit(operation, async () => {
+      let entry: Entry;
+      // An open waits for empty-worker disposal before reusing the file key.
+      try { entry = getEntry(); while (entry.disposing) { await entry.disposing; entry = getEntry(); } }
+      catch (error) { return await this.reject(operation, error); }
+      entry.pending++;
+      try { return await task(entry); }
+      finally { entry.pending--; this.disposeEmpty(entry); }
     });
-    this.queue = result.catch(() => {});
-    return result;
   }
-  private scheduleIdle() {
-    if (this.pending || this.stopping) return;
-    clearTimeout(this.idle);
-    this.idle = setTimeout(() => {
-      this.idle = undefined;
-      this.queue = this.queue.then(() => this.diagnostics.run('idle_reclaim', performance.now(), 0, () => this.adapter.close()))
-        .catch(() => {
-          // A live editor with unconfirmed saves stays open. Recheck next idle
-          // interval instead of leaving it resident forever after one failure.
-          this.scheduleIdle();
-        });
-    }, this.idleMs).unref();
+  private disposeEmpty(entry: Entry) {
+    if (entry.pending || entry.worker.documentCount || entry.disposing || this.stopping) return;
+    entry.disposing = entry.worker.shutdown().then(() => {
+      if (this.workers.get(entry.fileId) === entry) this.workers.delete(entry.fileId);
+    }).catch(() => {
+      // Keep the adapter if it refuses to confirm saving. No forced eviction.
+    }).finally(() => { entry.disposing = undefined; });
   }
-  private target(handle: string) { const doc = this.documents.get(handle); if (!doc) throw new GatewayError('UNKNOWN_DOCUMENT', 'Open the document again to obtain a valid handle.'); return doc; }
+  private target(handle: string) {
+    const entry = this.handles.get(handle);
+    if (!entry) throw new GatewayError('UNKNOWN_DOCUMENT', 'Open the document again to obtain a valid handle.');
+    return entry;
+  }
+  private async newHandle<T extends {documentHandle?: string}>(operation: Operation, task: () => Promise<T>) {
+    if (this.handles.size + this.opening >= 128) return this.reject<T>(operation, new GatewayError('DOCUMENT_LIMIT', 'Close unused document handles first.'));
+    this.opening++;
+    try { return await task(); } finally { this.opening--; }
+  }
   open(url: string) {
-    return this.serial('open_document', async () => {
-      if (this.documents.size >= 128) throw new GatewayError('DOCUMENT_LIMIT', 'Close unused document handles first.');
-      const target = parseDocument(url, this.baseUrl);
-      try {
-        const result = await this.adapter.open(target);
-        if (result.isError) { this.adapter.release(target); return { result }; }
-        const documentHandle = randomUUID(); this.documents.set(documentHandle, target);
-        return { documentHandle, fileId: target.fileId, pageId: target.pageId, result };
-      } catch (error) { this.adapter.release(target); throw error; }
-    });
+    let target;
+    try { target = parseDocument(url, this.baseUrl); }
+    catch (error) { return this.reject<Awaited<ReturnType<DocumentWorker['open']>>>('open_document', error); }
+    return this.newHandle('open_document', () => this.dispatch('open_document', () => this.workers.get(target.fileId) ?? this.create(target.fileId), async entry => {
+      const result = await entry.worker.open(target.url);
+      if (result.documentHandle) this.handles.set(result.documentHandle, entry);
+      return result;
+    }));
   }
-  inspect(handle: string) { return this.serial('inspect_document', () => this.adapter.open(this.target(handle))); }
   openPage(handle: string, pageId: string) {
-    return this.serial('open_page', async () => {
-      if (this.documents.size >= 128) throw new GatewayError('DOCUMENT_LIMIT', 'Close unused document handles first.');
-      const source = this.target(handle); const target = targetPage(source, pageId);
-      try {
-        const result = await this.adapter.openPage(source, target);
-        if (result.isError) { this.adapter.release(target); return { result }; }
-        const documentHandle = randomUUID(); this.documents.set(documentHandle, target);
-        return { documentHandle, fileId: target.fileId, pageId: target.pageId, result };
-      } catch (error) { this.adapter.release(target); throw error; }
-    });
+    return this.newHandle('open_page', () => this.dispatch('open_page', () => this.target(handle), async entry => {
+      const result = await entry.worker.openPage(handle, pageId);
+      if (result.documentHandle) this.handles.set(result.documentHandle, entry);
+      return result;
+    }));
   }
-  execute(handle: string, code: string, save: SaveMode = 'wait') { return this.serial('execute_code', () => this.adapter.execute(this.target(handle), code, save)); }
-  flush(handle: string) { return this.serial('flush_document', () => this.adapter.flush(this.target(handle))); }
-  export(handle: string, args: ExportOptions) { return this.serial('export_shape', () => this.adapter.exportShape(this.target(handle), args)); }
-  documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>) { return this.serial(name, () => this.adapter.documentation(name, args)); }
+  inspect(handle: string) { return this.dispatch('inspect_document', () => this.target(handle), e => e.worker.inspect(handle)); }
+  execute(handle: string, code: string, save: SaveMode = 'wait') { return this.dispatch('execute_code', () => this.target(handle), e => e.worker.execute(handle, code, save)); }
+  flush(handle: string) { return this.dispatch('flush_document', () => this.target(handle), e => e.worker.flush(handle)); }
+  export(handle: string, args: ExportOptions) { return this.dispatch('export_shape', () => this.target(handle), e => e.worker.export(handle, args)); }
   closeDocument(handle: string) {
-    return this.serial('close_document', async () => {
-      const target = this.target(handle), browserReleased = this.documents.size === 1;
-      if (browserReleased) await this.adapter.close();
-      else await this.adapter.flushPending();
-      this.adapter.release(target); this.documents.delete(handle);
-      return { closed: true, browserReleased, remainingHandles: this.documents.size };
+    return this.dispatch('close_document', () => this.target(handle), async entry => {
+      const result = await entry.worker.closeDocument(handle); this.handles.delete(handle);
+      return { ...result, remainingFileHandles: result.remainingHandles, remainingHandles: this.handles.size };
     });
   }
-  async shutdown() {
+  documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>) {
+    return this.admit(name, () => {
+      this.docs ??= new DocumentWorker(this.adapter(), this.baseUrl, this.idleMs, this.diagnostics);
+      return this.docs.documentation(name, args);
+    });
+  }
+  shutdown(): Promise<void> {
+    this.closing ??= this.shutdownWorkers().finally(() => { this.closing = undefined; });
+    return this.closing;
+  }
+  private async shutdownWorkers() {
     this.stopping = true;
-    clearTimeout(this.idle); await this.queue; clearTimeout(this.idle);
-    await this.diagnostics.run('shutdown', performance.now(), 0, () => this.adapter.close());
-    for (const target of this.documents.values()) this.adapter.release(target);
-    this.documents.clear();
+    if (this.pending) await new Promise<void>(resolve => { this.drained = resolve; });
+    const entries = [...this.workers.values()];
+    const results = await Promise.allSettled([
+      ...entries.map(async entry => { await entry.disposing; await entry.worker.shutdown(); }),
+      ...(this.docs ? [this.docs.shutdown()] : []),
+    ]);
+    entries.forEach((entry, index) => {
+      if (results[index].status !== 'fulfilled') return;
+      for (const [handle, owner] of this.handles) if (owner === entry) this.handles.delete(handle);
+      this.workers.delete(entry.fileId);
+    });
+    if (this.docs && results[entries.length].status === 'fulfilled') this.docs = undefined;
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure?.status === 'rejected') { this.stopping = false; throw failure.reason; }
+    this.handles.clear(); this.workers.clear();
   }
 }

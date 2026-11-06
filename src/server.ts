@@ -1,12 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import type { Gateway } from './gateway.js';
+import type { GatewayApi } from './gateway.js';
 import { GatewayError, publicError } from './errors.js';
 import { gatewayInstructions } from './instructions.js';
 
 function json(value: unknown): CallToolResult { return { content: [{ type: 'text', text: JSON.stringify(value) }] }; }
-export function createMcpServer(gateway: Gateway) {
+export function createMcpServer(gateway: GatewayApi) {
   const server = new McpServer({ name: 'penpot-better-mcp', version: '0.1.0' }, {
     instructions: gatewayInstructions,
   });
@@ -24,12 +24,12 @@ export function createMcpServer(gateway: Gateway) {
     return { ...json(opened), ...(opened.result.isError ? { isError: true } : {}) };
   }));
   server.registerTool('execute_code', { description: 'Execute official Penpot Plugin API JavaScript in the specified file. May edit designs. Default save=wait confirms persistence. For frequent reads or batched writes, use save=deferred to return immediately after execution, then flush_document after the write batch. Deferred success does not confirm persistence. Never retry uncertain edits blindly.', inputSchema: { ...handle, code: z.string().min(1).max(100_000), save: z.enum(['wait','deferred']).default('wait') }, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false } }, safe(args => gateway.execute(args.documentHandle, args.code, args.save)));
-  server.registerTool('flush_document', { description: 'Wait for prior deferred edits to finish saving before reporting a batch complete. File switching and normal close also flush automatically.', inputSchema: handle }, safe(args => gateway.flush(args.documentHandle)));
+  server.registerTool('flush_document', { description: 'Wait for prior deferred edits to finish saving before reporting a batch complete. Page switching, worker eviction and normal close also flush automatically.', inputSchema: handle }, safe(args => gateway.flush(args.documentHandle)));
   server.registerTool('export_shape', { description: 'Export a shape, selection or page through the official MCP tool. mode=fill returns the original image fill (PNG only); shape is the default. SVG is returned as text.', inputSchema: { ...handle, shapeId: z.union([z.string().uuid(),z.enum(['page','selection'])]), format: z.enum(['png', 'svg']).default('png'), mode: z.enum(['shape','fill']).default('shape') }, annotations: { readOnlyHint: true } }, safe(args => {
     if(args.mode==='fill' && args.format!=='png')throw new GatewayError('INVALID_EXPORT','Image fill export supports PNG only.');
     return gateway.export(args.documentHandle, { shapeId: args.shapeId, format: args.format, mode: args.mode });
   }));
-  server.registerTool('close_document', { description: 'Confirm active pending saves and release this handle. Keeps the editor while other handles remain; closes the browser when the last handle is released. Returns browserReleased and remainingHandles. Idle reclamation also closes the browser after saving.', inputSchema: handle }, safe(async args => json(await gateway.closeDocument(args.documentHandle))));
+  server.registerTool('close_document', { description: 'Confirm active pending saves and release this handle. Keeps this file\'s editor while its other handles remain; closes only this file\'s browser when its last handle is released. Returns browserReleased, remainingFileHandles and global remainingHandles. Idle reclamation also closes the browser after saving.', inputSchema: handle }, safe(async args => json(await gateway.closeDocument(args.documentHandle))));
   server.registerTool('high_level_overview', { description: 'Read the upstream Penpot Plugin API overview with managed-browser instructions.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(async () => {
     const result = await gateway.documentation('high_level_overview', {});
     return { ...result, content: [

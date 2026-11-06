@@ -5,6 +5,7 @@ const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 export function targetPage(target: DocumentTarget, pageId: string): DocumentTarget {
   if (!uuid.test(pageId)) throw new GatewayError('INVALID_PAGE', 'Expected a page UUID.');
+  pageId = pageId.toLowerCase();
   const url = new URL(target.url);
   const [path, query] = url.hash.slice(1).split('?');
   const params = new URLSearchParams(query); params.set('page-id', pageId);
@@ -24,9 +25,9 @@ export function parseDocument(input: string, baseUrl: string): DocumentTarget {
   });
   if (params.has('share-id') || params.get('screen') === 'view' || params.get('screen') === 'viewer' || hashPath.startsWith('/view')) throw new GatewayError('UNSUPPORTED_LINK', 'Share/viewer links require a read-only adapter; use an editor file URL in this release.');
   const legacy = hashPath.match(/^\/workspace\/([^/]+)\/([^/]+)\/?$/);
-  const fileId = params.get('file-id') || legacy?.[2];
-  const teamId = params.get('team-id') || legacy?.[1];
-  const pageId = params.get('page-id') || undefined;
+  const fileId = (params.get('file-id') || legacy?.[2])?.toLowerCase();
+  const teamId = (params.get('team-id') || legacy?.[1])?.toLowerCase();
+  const pageId = params.get('page-id')?.toLowerCase() || undefined;
   if (!fileId || !uuid.test(fileId) || !teamId || !uuid.test(teamId) || (pageId && !uuid.test(pageId))) throw new GatewayError('INVALID_DOCUMENT', 'Expected a workspace URL with valid team-id, file-id and optional page-id.');
   const canonical = new URL(baseUrl);
   const query = new URLSearchParams();
