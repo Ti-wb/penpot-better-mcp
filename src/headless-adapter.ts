@@ -3,12 +3,13 @@ import { stat } from 'node:fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { Browser, BrowserContext, Page, Request } from 'playwright';
+import type { Browser, BrowserContext, CDPSession, Page, Request } from 'playwright';
 import { WebSocket } from 'ws';
 import type { Config } from './config.js';
 import type { DocumentTarget } from './document.js';
-import type { DesignAdapter } from './adapter.js';
+import type { DesignAdapter, ExportOptions, SaveMode } from './adapter.js';
 import { GatewayError } from './errors.js';
+import { normalizeUpstreamResult } from './upstream-result.js';
 
 export class HeadlessAdapter implements DesignAdapter {
   private browser?: Browser;
@@ -16,11 +17,13 @@ export class HeadlessAdapter implements DesignAdapter {
   private page?: Page;
   private active?: string;
   private client?: Client;
+  private devtools?: CDPSession;
   private readonly bridgeToken = randomBytes(32).toString('hex');
   private readonly sockets = new Set<WebSocket>();
   private readonly saves = new Set<Request>();
   private saveActivity = 0;
   private saveFailed = false;
+  private needsSaveCheck = true;
   constructor(private readonly config: Config) {}
 
   private async upstream() {
@@ -36,7 +39,15 @@ export class HeadlessAdapter implements DesignAdapter {
 
   private async call(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     const client = await this.upstream();
-    try { return CallToolResultSchema.parse(await client.callTool({ name, arguments: args }, CallToolResultSchema, { timeout: this.config.timeoutMs })); }
+    try {
+      const result = normalizeUpstreamResult(CallToolResultSchema.parse(await client.callTool({ name, arguments: args }, CallToolResultSchema, { timeout: this.config.timeoutMs })));
+      // The official plugin logs execution results to Chromium's console. Its
+      // console cache retains returned object graphs even after GC (over 1 GiB
+      // for twenty 3,000-shape reads). MCP already captured the result/logs;
+      // release only inspector references, preserving plugin storage/history.
+      await this.devtools?.send('Runtime.discardConsoleEntries').catch(() => {});
+      return result;
+    }
     catch {
       // A timeout is not proof that an edit failed. Never retry dispatched code.
       await this.close(true);
@@ -76,48 +87,63 @@ export class HeadlessAdapter implements DesignAdapter {
     });
   }
 
-  private async activate(target: DocumentTarget) {
+  private async activate(target: DocumentTarget, verify = true) {
     await this.launch();
-    if (this.active === target.url && this.page && !this.page.isClosed() && await this.matches(target)) return;
-    if (this.page && !this.page.isClosed()) { await this.waitForSave(); await this.page.close(); }
+    // execute_code checks identity inside the dispatched script, avoiding an
+    // extra upstream round trip while still refusing edits in the wrong file.
+    if (this.active === target.url && this.page && !this.page.isClosed() && (!verify || await this.matches(target))) return;
+    if (this.page && !this.page.isClosed()) {
+      await this.waitForSave(); await this.page.close();
+      // Closing a page starts an asynchronous WS close handshake. Retire its
+      // relay sockets before opening another plugin with this routing token.
+      for (const socket of this.sockets) socket.terminate();
+      this.sockets.clear();
+    }
     this.active = undefined;
     this.page = await this.context!.newPage();
+    this.devtools = await this.context!.newCDPSession(this.page);
     this.saves.clear(); this.saveFailed = false; this.saveActivity = 0;
+    this.needsSaveCheck = true;
     const isSave = (request: Request) => {
       const url = new URL(request.url());
-      return url.origin === this.config.baseUrl && url.pathname === '/api/rpc/command/update-file';
+      return url.origin === this.config.baseUrl && ['/api/main/methods/update-file', '/api/rpc/command/update-file'].includes(url.pathname);
     };
-    this.page.on('request', request => { if (isSave(request)) { this.saves.add(request); this.saveActivity++; } });
+    this.page.on('request', request => { if (isSave(request)) { this.saves.add(request); this.saveActivity++; this.needsSaveCheck = true; } });
     this.page.on('response', response => { if (isSave(response.request())) this.saveFailed = !response.ok(); });
     this.page.on('requestfinished', request => { if (this.saves.delete(request)) this.saveActivity++; });
     this.page.on('requestfailed', request => { if (this.saves.delete(request)) { this.saveActivity++; this.saveFailed = true; } });
     this.page.setDefaultTimeout(30_000);
     await this.page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    let phase = 'editor readiness';
     try {
       const login = this.page.locator('input[type="password"]');
       await this.page.getByTestId('mcp-btn').or(login).first().waitFor({ state: 'visible', timeout: 60_000 });
       if (await login.isVisible()) throw new Error('Login required');
-      phase = 'MCP menu';
-      const button = this.page.getByTestId('mcp-btn');
-      const connected = button.locator('[class*="__connected"]').first();
-      const action = this.page.getByRole('menuitem').filter({ hasText: /^(Connect(?: here)?|連線|在此連線|连接|在此连接|Conectar)$/i }).first();
-      // Released Penpot can connect immediately or restore automatically, showing
-      // only a tooltip. Another active tab instead offers a "Connect here" menu.
-      // Check and click atomically so an automatic reconnect cannot be toggled off.
-      await button.evaluate(el => { if (!el.querySelector('[class*="__connected"]')) (el as HTMLElement).click(); });
-      await connected.or(action).first().waitFor({ state: 'visible', timeout: 15_000 });
-      if (await action.isVisible()) await action.click();
-      await this.page.keyboard.press('Escape');
     } catch {
       const login = await this.page.locator('input[type="password"]').count();
       await this.close(true);
-      throw new GatewayError(login ? 'AUTH_REQUIRED' : 'DOCUMENT_UNAVAILABLE', login ? 'The Penpot session expired. Run npm run auth again.' : `Unable to complete ${phase}. Check file access and enable MCP in Penpot Integrations.`);
+      throw new GatewayError(login ? 'AUTH_REQUIRED' : 'DOCUMENT_UNAVAILABLE', login ? 'The Penpot session expired. Run npm run auth again.' : 'The editor is unavailable. Check file access and enable MCP in Penpot Integrations.');
     }
-    // Poll only a read-only identity query, never user-supplied code.
-    const until = Date.now() + 30_000;
+    // The toolbar can briefly show connected and then reset during loading.
+    // Treat the plugin identity response as readiness, not one UI snapshot.
+    // Poll only this fixed read; user code is never replayed.
+    const button = this.page.getByTestId('mcp-btn');
+    const action = this.page.getByRole('menuitem').filter({ hasText: /^(Connect(?: here)?|連線|在此連線|连接|在此连接|Conectar)$/i }).first();
+    const until = Date.now() + 60_000;
+    let lastConnect = 0;
     do {
       if (await this.matches(target)) { this.active = target.url; return; }
+      if (Date.now() - lastConnect >= 5000) {
+        try {
+          await button.evaluate(el => {
+            if (!el.querySelector('[class*="__connected"]') && el.getAttribute('aria-pressed') !== 'true') (el as HTMLElement).click();
+          });
+          if (await action.isVisible()) {
+            await action.click({ timeout: 1000 });
+            lastConnect = Date.now();
+            await this.page.keyboard.press('Escape');
+          }
+        } catch { /* UI can remount while the editor initializes. */ }
+      }
       await new Promise(r => setTimeout(r, 300));
     } while (Date.now() < until);
     await this.close(true);
@@ -136,6 +162,7 @@ export class HeadlessAdapter implements DesignAdapter {
 
   private async waitForSave() {
     if (!this.page || this.page.isClosed()) return;
+    if (!this.needsSaveCheck && !this.saves.size && !this.saveFailed) return;
     // Penpot 2.18.x debounces its "pending" indicator by 200 ms. A single
     // saved-status lookup can therefore see the previous save and lose edits
     // when we close the page. Require a stable indicator beyond that debounce,
@@ -147,7 +174,7 @@ export class HeadlessAdapter implements DesignAdapter {
       while (Date.now() < deadline) {
         const saved = await this.page.locator('[class*="__saved-status"]').count();
         if (!saved || this.saves.size || this.saveFailed || activity !== this.saveActivity) stableSince = Date.now();
-        else if (Date.now() - stableSince >= 750) return;
+        else if (Date.now() - stableSince >= 750) { this.needsSaveCheck = false; return; }
         activity = this.saveActivity;
         await new Promise(r => setTimeout(r, 50));
       }
@@ -160,18 +187,25 @@ export class HeadlessAdapter implements DesignAdapter {
     return this.call('execute_code', { code: 'return {version: penpot.version, fileId: penpot.currentFile.id, fileName: penpot.currentFile.name, pageId: penpot.currentPage.id, pages: penpotUtils.getPages()};' });
   }
 
-  async execute(target: DocumentTarget, code: string) {
-    await this.activate(target);
+  async execute(target: DocumentTarget, code: string, save: SaveMode = 'wait') {
+    await this.activate(target, false);
     const check = `if(penpot.currentFile?.id!==${JSON.stringify(target.fileId)}${target.pageId ? ` || penpot.currentPage?.id!==${JSON.stringify(target.pageId)}` : ''}) throw new Error("DOCUMENT_CONTEXT_CHANGED");`;
+    this.needsSaveCheck = true;
     const result = await this.call('execute_code', { code: `${check}\nreturn await (async()=>{\n${code}\n})();` });
     // Tool errors can follow partial edits, so also wait for pending saves on errors.
-    await this.waitForSave();
-    return result;
+    if (save === 'wait') await this.waitForSave();
+    return { ...result, _meta: { ...result._meta, saveState: save === 'wait' ? 'confirmed' : 'not_confirmed' } };
   }
 
-  async exportShape(target: DocumentTarget, args: {shapeId: string; format: 'png' | 'svg'}) {
+  async flush(target: DocumentTarget): Promise<CallToolResult> {
     await this.activate(target);
-    return this.call('export_shape', args);
+    await this.waitForSave();
+    return { content: [{ type: 'text', text: JSON.stringify({ fileId: target.fileId, saved: true }) }] };
+  }
+
+  async exportShape(target: DocumentTarget, args: ExportOptions) {
+    await this.activate(target);
+    return this.call('export_shape', { ...args, mode: args.mode || 'shape' });
   }
 
   async documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>) { return this.call(name, args); }
@@ -180,6 +214,7 @@ export class HeadlessAdapter implements DesignAdapter {
     if (!force) await this.waitForSave();
     this.active = undefined;
     this.page = undefined;
+    this.devtools = undefined;
     const context = this.context; this.context = undefined;
     const browser = this.browser; this.browser = undefined;
     const client = this.client; this.client = undefined;

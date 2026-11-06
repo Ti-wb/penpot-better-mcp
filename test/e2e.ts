@@ -19,10 +19,13 @@ const transport = process.env.E2E_HTTP_URL
   : new StdioClientTransport({ command: process.execPath, args: ['dist/main.js'], env: { ...env, PENPOT_BASE_URL: targets.base }, stderr: 'inherit' });
 await client.connect(transport);
 const evidence: Record<string, unknown> = { at: new Date().toISOString(), site: targets.base, transport: process.env.E2E_HTTP_URL ? 'http' : 'stdio', display: process.env.DISPLAY || null, checks: [] };
+const handles = new Set<string>();
 const check = (name: string) => { (evidence.checks as string[]).push(name); console.log('PASS', name); };
 async function call(name: string, args: Record<string, unknown>) {
   const result = CallToolResultSchema.parse(await client.callTool({ name, arguments: args }, CallToolResultSchema, { timeout: 180_000 }));
   if (result.isError) throw new Error(JSON.stringify(result.content));
+  if (name === 'open_document') handles.add(data(result).documentHandle);
+  if (name === 'close_document') handles.delete(String(args.documentHandle));
   return result;
 }
 function data(result: { content: any[] }) { return JSON.parse(result.content.find(c => c.type === 'text').text); }
@@ -50,8 +53,17 @@ try {
   assert.equal(found.length, 1); assert.equal(found[0].name, marker); check('browser teardown and cold reopen retain saved changes');
   await call('execute_code', { documentHandle: reopened.documentHandle, code: `penpotUtils.findShapeById(${JSON.stringify(created.id)}).remove();return true;` }); check('owned test shape cleanup');
   evidence.status = 'passed';
+} catch (error) {
+  evidence.status = 'failed';
+  throw error;
 } finally {
+  let cleanupFailed = false;
+  for (const documentHandle of handles) {
+    try { await call('close_document', { documentHandle }); }
+    catch { cleanupFailed = true; evidence.status = 'failed'; }
+  }
   await client.close();
   await mkdir('test-results', { recursive: true });
   await writeFile(resolve('test-results', process.env.E2E_REPORT || 'acceptance.json'), JSON.stringify(evidence, null, 2));
+  if (cleanupFailed) throw new Error('Unable to release an acceptance-test document handle.');
 }

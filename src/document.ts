@@ -23,7 +23,8 @@ export function parseDocument(input: string, baseUrl: string): DocumentTarget {
   const query = new URLSearchParams();
   if (pageId) query.set('page-id', pageId);
   query.set('team-id', teamId); query.set('file-id', fileId);
-  if (hashPath === '/workspace' || legacy) canonical.hash = '/workspace?' + query;
-  else { query.set('screen', 'workspace'); canonical.search = query.toString(); }
+  // Both tested releases use the hash router. Accept alternate link syntax,
+  // but navigate using the deployed editor route rather than passing it on.
+  canonical.hash = '/workspace?' + query;
   return { url: canonical.href, fileId, pageId };
 }

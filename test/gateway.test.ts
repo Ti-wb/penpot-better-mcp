@@ -8,6 +8,7 @@ import { createHttpApp } from '../src/http.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { AddressInfo } from 'node:net';
+import { normalizeUpstreamResult } from '../src/upstream-result.js';
 
 const base = 'https://penpot.example';
 const team = '11111111-1111-4111-8111-111111111111';
@@ -15,12 +16,30 @@ const file = '22222222-2222-4222-8222-222222222222';
 const page = '33333333-3333-4333-8333-333333333333';
 const url = `${base}/#/workspace?team-id=${team}&file-id=${file}&page-id=${page}`;
 const ok = { content: [{ type: 'text' as const, text: '{}' }] };
-function fake(): DesignAdapter { return { open: async () => ok, execute: async () => ok, exportShape: async () => ok, documentation: async () => ok, close: async () => {} }; }
+function fake(): DesignAdapter { return { open: async () => ok, execute: async () => ok, flush: async () => ok, exportShape: async () => ok, documentation: async () => ok, close: async () => {} }; }
 
-test('normalizes deployed and newer workspace URLs without forwarding arbitrary parameters', () => {
+test('flags official plain-text failures without misclassifying user return values', () => {
+  assert.equal(normalizeUpstreamResult({content:[{type:'text',text:'Tool execution failed: Error: connection lost'}]}).isError,true);
+  assert(!normalizeUpstreamResult({content:[{type:'text',text:JSON.stringify({result:'Tool execution failed: user data'})}]}).isError);
+});
+
+test('deferred writes and their flush remain in order, with waiting the default', async () => {
+  const adapter=fake(); const seen:string[]=[];
+  adapter.execute=async (_target,_code,save)=>{seen.push(save!);return ok;};
+  adapter.flush=async()=>{seen.push('flush');return ok;};
+  const gateway=new Gateway(adapter,base);
+  try {
+    const opened=await gateway.open(url);assert(opened.documentHandle);
+    await Promise.all([gateway.execute(opened.documentHandle,'write','deferred'),gateway.flush(opened.documentHandle),gateway.execute(opened.documentHandle,'write')]);
+    assert.deepEqual(seen,['deferred','flush','wait']);
+  } finally {await gateway.shutdown();}
+});
+
+test('normalizes accepted workspace URLs without forwarding arbitrary parameters', () => {
   const target = parseDocument(url + '&plugin=untrusted', base);
   assert.equal(target.fileId, file); assert.equal(target.pageId, page); assert(!target.url.includes('plugin'));
-  assert.equal(parseDocument(`${base}/?screen=workspace&team-id=${team}&file-id=${file}`, base).fileId, file);
+  const queryLink=parseDocument(`${base}/?screen=workspace&team-id=${team}&file-id=${file}`, base);
+  assert.equal(queryLink.fileId,file);assert(queryLink.url.includes('/#/workspace?'));
   assert.equal(parseDocument(`${base}/#/workspace/${team}/${file}`, base).fileId, file);
 });
 test('rejects cross-site, share-link and conflicting file references before opening a browser', () => {

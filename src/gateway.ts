@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DesignAdapter } from './adapter.js';
+import type { DesignAdapter, ExportOptions, SaveMode } from './adapter.js';
 import { parseDocument, type DocumentTarget } from './document.js';
 import { GatewayError } from './errors.js';
 
@@ -35,8 +35,9 @@ export class Gateway {
     });
   }
   inspect(handle: string) { return this.serial(() => this.adapter.open(this.target(handle))); }
-  execute(handle: string, code: string) { return this.serial(() => this.adapter.execute(this.target(handle), code)); }
-  export(handle: string, args: {shapeId: string; format: 'png' | 'svg'}) { return this.serial(() => this.adapter.exportShape(this.target(handle), args)); }
+  execute(handle: string, code: string, save: SaveMode = 'wait') { return this.serial(() => this.adapter.execute(this.target(handle), code, save)); }
+  flush(handle: string) { return this.serial(() => this.adapter.flush(this.target(handle))); }
+  export(handle: string, args: ExportOptions) { return this.serial(() => this.adapter.exportShape(this.target(handle), args)); }
   documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>) { return this.serial(() => this.adapter.documentation(name, args)); }
   closeDocument(handle: string) { return this.serial(async () => { this.target(handle); await this.adapter.close(); this.documents.delete(handle); return { closed: true }; }); }
   async shutdown() { clearTimeout(this.idle); await this.queue; clearTimeout(this.idle); await this.adapter.close(); this.documents.clear(); }
