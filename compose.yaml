@@ -21,6 +21,7 @@ services:
       PENPOT_UPSTREAM_WS: ws://upstream:4402
       PENPOT_DIAGNOSTICS: ${PENPOT_DIAGNOSTICS:-true}
       PENPOT_IDLE_MS: ${PENPOT_IDLE_MS:-600000}
+      PENPOT_MAX_WORKERS: ${PENPOT_MAX_WORKERS:-2}
       GATEWAY_TOKEN_FILE: /app/.state/gateway-token
       HOST: 0.0.0.0
     volumes: ["./.state:/app/.state:ro"]

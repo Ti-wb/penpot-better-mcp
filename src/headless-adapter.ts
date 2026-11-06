@@ -179,6 +179,11 @@ export class HeadlessAdapter implements DesignAdapter {
     // execute_code checks identity inside the dispatched script, avoiding an
     // extra upstream round trip while still refusing edits in the wrong file.
     if (this.editor?.ready && this.editor.target.url === target.url && (!verify || await this.matches(target))) return;
+    if (this.editor?.ready && this.editor.target.fileId === target.fileId && target.pageId && this.editor.target.url !== target.url) {
+      const selected = await this.selectPage(this.editor.target, target);
+      if (selected.isError) throw new GatewayError('DOCUMENT_CONTEXT_CHANGED', 'Unable to select this handle\'s page. No user code ran. Use open_page to select the intended page explicitly.');
+      return;
+    }
     if (this.editor) {
       await this.waitForSave();
       const previous = this.editor;
@@ -336,6 +341,12 @@ export class HeadlessAdapter implements DesignAdapter {
     // handle in this file should not force a reload of its original page first.
     if (!this.editor?.ready || this.editor.lost || this.editor.target.fileId !== source.fileId) await this.activate(source, false);
     this.assertCertain(source);
+    const result = await this.selectPage(source, target);
+    this.assertCertain(source);
+    return result;
+  }
+
+  private async selectPage(source: DocumentTarget, target: DocumentTarget) {
     await this.waitForSave();
     const missing = randomUUID();
     const result = await this.checkedCall(source, `const id=${JSON.stringify(target.pageId)};
@@ -347,7 +358,6 @@ return {fileId:penpot.currentFile.id,pageId:penpot.currentPage.id,pages:penpotUt
     const value = text?.type === 'text' ? JSON.parse(text.text).result : undefined;
     if (value?.missingPage === missing) throw new GatewayError('PAGE_NOT_FOUND', 'The requested page is not in this file. Inspect the page list before opening it.');
     if (value?.fileId !== target.fileId || value?.pageId !== target.pageId) throw new GatewayError('DOCUMENT_CONTEXT_CHANGED', 'The requested page did not become active. Open the intended editor URL before editing.');
-    this.assertCertain(source);
     this.binding(target);
     this.editor!.target = target;
     this.diagnostics.lifecycle('page_selected');

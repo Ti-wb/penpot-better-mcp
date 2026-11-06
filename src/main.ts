@@ -13,7 +13,7 @@ async function main() {
   if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync('.runtime/browsers')) process.env.PLAYWRIGHT_BROWSERS_PATH = resolve('.runtime/browsers');
   const config = loadConfig();
   const diagnostics = new Diagnostics(config.diagnostics ? record => console.error(JSON.stringify(record)) : undefined);
-  const gateway = new Gateway(new HeadlessAdapter(config, diagnostics), config.baseUrl, config.idleMs, diagnostics);
+  const gateway = new Gateway(() => new HeadlessAdapter(config, diagnostics), config.baseUrl, config.idleMs, diagnostics, config.maxWorkers);
   let closeListener: () => void = () => {};
   let stopping = false;
   const stop = async () => { if (stopping) return; stopping = true; closeListener(); await gateway.shutdown(); process.exit(0); };

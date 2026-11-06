@@ -28,8 +28,12 @@ const {Gateway}=await import(new URL('gateway.js',source).href);
 const {createHttpApp}=await import(new URL('http.js',source).href);
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve('.runtime/browsers');
 const { chromium } = await import('playwright');
-const adapter = new HeadlessAdapter(config);
-const gateway = new Gateway(adapter, config.baseUrl);
+let adapter = new HeadlessAdapter(config);
+const gateway = new Gateway(process.env.LOAD_BASELINE_DIR ? adapter : (fileId?: string) => {
+  const instance = new HeadlessAdapter(config);
+  if (fileId === targets.files[1].id) adapter = instance;
+  return instance;
+}, config.baseUrl);
 const bearer = randomBytes(32).toString('hex');
 const listener = createHttpApp(gateway, bearer).listen(0, '127.0.0.1');
 await new Promise<void>(r => listener.once('listening', r));

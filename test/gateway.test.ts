@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Gateway } from '../src/gateway.js';
+import { DocumentWorker } from '../src/document-worker.js';
 import { parseDocument } from '../src/document.js';
 import { GatewayError, publicError } from '../src/errors.js';
 import type { DesignAdapter } from '../src/adapter.js';
@@ -22,7 +22,7 @@ test('page handles keep independent targets and failed page opens release their 
   const adapter = fake(); const seen: (string | undefined)[] = []; let released = 0;
   adapter.execute = async target => { seen.push(target.pageId); return ok; };
   adapter.release = () => { released++; };
-  const gateway = new Gateway(adapter, base);
+  const gateway = new DocumentWorker(adapter, base);
   try {
     const first = await gateway.open(url);
     const second = await gateway.openPage(first.documentHandle!, file);
@@ -58,7 +58,7 @@ test('releases bindings on failed opens, closed handles and shutdown', async () 
   const adapter = fake(); const live = new Set<object>(); let failed = false;
   adapter.open = async target => { live.add(target); return failed ? {...ok,isError:true} : ok; };
   adapter.release = target => { live.delete(target); };
-  const gateway = new Gateway(adapter, base);
+  const gateway = new DocumentWorker(adapter, base);
   try {
     failed = true; await gateway.open(url); assert.equal(live.size,0);
     failed = false; const first=await gateway.open(url); await gateway.open(url); assert.equal(live.size,2);
@@ -71,7 +71,7 @@ test('deferred writes and their flush remain in order, with waiting the default'
   const adapter=fake(); const seen:string[]=[];
   adapter.execute=async (_target,_code,save)=>{seen.push(save!);return ok;};
   adapter.flush=async()=>{seen.push('flush');return ok;};
-  const gateway=new Gateway(adapter,base);
+  const gateway=new DocumentWorker(adapter,base);
   try {
     const opened=await gateway.open(url);assert(opened.documentHandle);
     await Promise.all([gateway.execute(opened.documentHandle,'write','deferred'),gateway.flush(opened.documentHandle),gateway.execute(opened.documentHandle,'write')]);
@@ -96,7 +96,7 @@ test('serializes concurrent requests, preserves bound targets, and continues aft
     await new Promise(r => setTimeout(r, 10)); running--;
     if (code === 'fail') throw new Error('failure'); return ok;
   };
-  const gateway = new Gateway(adapter, base);
+  const gateway = new DocumentWorker(adapter, base);
   try {
     const a = await gateway.open(url); const other = '44444444-4444-4444-8444-444444444444'; const b = await gateway.open(url.replace(file,other));
     assert(a.documentHandle && b.documentHandle);
@@ -109,13 +109,13 @@ test('serializes concurrent requests, preserves bound targets, and continues aft
 test('does not retry an uncertain write and does not expose raw exception credentials', async () => {
   const adapter = fake(); let calls = 0;
   adapter.execute = async () => { calls++; throw new GatewayError('EXECUTION_UNKNOWN','Inspect before retrying',true); };
-  const gateway = new Gateway(adapter, base);
+  const gateway = new DocumentWorker(adapter, base);
   try { const doc = await gateway.open(url); await assert.rejects(gateway.execute(doc.documentHandle!,'write'), /Inspect/); assert.equal(calls,1); }
   finally { await gateway.shutdown(); }
   assert(!JSON.stringify(publicError(new Error('userToken=private-secret'))).includes('private-secret'));
 });
 test('HTTP requires bearer auth, rejects browser origins and serves a real MCP client', async () => {
-  const adapter = fake(); const gateway = new Gateway(adapter,base); const token = 't'.repeat(40);
+  const adapter = fake(); const gateway = new DocumentWorker(adapter,base); const token = 't'.repeat(40);
   const server = createHttpApp(gateway,token).listen(0,'127.0.0.1');
   await new Promise<void>(r=>server.once('listening',r));
   const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;

@@ -2,8 +2,11 @@
 
 ```mermaid
 flowchart LR
-  C[MCP client] --> G[Gateway / document handles / queue]
-  G --> A[DesignAdapter]
+  C[Multiple MCP clients] --> G[Gateway / document handles]
+  G --> Q1[File A queue]
+  G --> Q2[File B queue]
+  Q1 --> A[Per-file DesignAdapter / bounded browser pool]
+  Q2 --> A
   A --> U[Private official MCP sidecar]
   U <--> R[WebSocket relay]
   R <--> P[Official Plugin in headless Chromium]
@@ -14,9 +17,13 @@ flowchart LR
 
 ## Current adapter
 
-Each process has one authenticated browser context and at most one active editor page. Handles refer to a configured origin, file and optional page. Opening, switching, editing and closing run through one bounded queue. Changing documents closes the previous page after checking the save indicator. Closing a handle confirms pending work but retains the editor while other handles remain; the last close reclaims the browser. Idle browsers are reclaimed; handles can reopen their documents.
+Each file has a distinct adapter, serial queue, browser context and editor. File IDs are the scheduling key, so different page/team URL variants of one file share a queue. Different files execute in parallel, up to `PENPOT_MAX_WORKERS` resident browsers (default 2; range 1–16). The pool reclaims the least recently used idle worker only after confirmed saving, never during a call. Handles and file uncertainty epochs survive eviction; a later call reopens the editor. Failed saves preserve live editors, try other idle victims and return `WORKER_CAPACITY` if no victim is safe. A close on an already evicted file needs no browser slot.
 
-The browser loads the real Penpot application and its bundled MCP Plugin. Playwright routes only the configured site's `/mcp/ws` socket to a dedicated official MCP server. The relay uses a random in-memory routing token, shared with this process's upstream HTTP client. The user's original MCP token is not forwarded to the sidecar. Collaboration sockets and backend calls retain their normal authenticated Penpot behavior.
+Each file accepts at most 32 running/queued operations; the gateway accepts at most 128 operations and 128 handles. Handle reservations include in-flight opens. Empty logical workers are disposed; shutdown drains accepted work. Static API documentation uses a separate adapter with no browser allocation. Closing the last handle for a file releases only its browser; other files remain usable.
+
+Serialization covers each tool call, not a multi-call agent workflow or Penpot edits made outside this gateway. Dependent read-modify-write belongs in one awaited script, or requires an explicit precondition. Same-file agents share Plugin storage and should namespace keys and assign shape ownership. Multiple independently started gateway processes do not coordinate file locks; clients needing these guarantees must share one HTTP endpoint.
+
+The browser loads the real Penpot application and its bundled MCP Plugin. Playwright routes only the configured site's `/mcp/ws` socket to a dedicated official MCP server. The relay uses a random in-memory routing token, shared with that file worker's upstream HTTP client. Different file workers use distinct routing tokens, preventing official Plugin connections from replacing each other. The user's original MCP token is not forwarded to the sidecar. Collaboration sockets and backend calls retain their normal authenticated Penpot behavior.
 
 This relies on the current official MCP server using tokens for connection matching. It is a private sidecar, not an authorization service: never expose its HTTP or WebSocket ports publicly. The public gateway boundary is stdio process ownership or the gateway bearer token. One gateway is one trusted principal; a guessed document handle is not a separate permission boundary.
 
@@ -24,7 +31,7 @@ Authentication uses an interactive terminal with masked password entry and the P
 
 The adapter verifies file/page identity before dispatch. Warm `execute_code` calls use the identity guard in the same dispatched script, removing a redundant round trip. Exports still verify context separately. Penpot remains responsible for user/file permissions. Share-link access must use a future restricted read adapter; it is deliberately rejected in the editor path. Local browser JavaScript, especially arbitrary `execute_code`, is trusted as a user-authorized operation rather than sandboxed against that same user.
 
-`open_page(handle, pageId)` creates a new immutable page-bound handle in the same file. It flushes pending saves and navigates through the existing Plugin without reloading the editor; other handles retain their original targets. Raw navigation inside user code can still change the editor. The inline guard then returns `DOCUMENT_CONTEXT_CHANGED` with expected/actual IDs and recovery guidance before executing the next user script. Its per-call marker avoids confusing ordinary returned data with a gateway failure and adds no warm-path RPC.
+`open_page(handle, pageId)` creates a new immutable page-bound handle in the same file. It flushes pending saves and navigates through the existing Plugin without reloading the editor; other handles retain their original targets. Alternating existing page-bound handles also selects the page without reloading the editor. Raw navigation inside user code can still change the editor. The inline guard then returns `DOCUMENT_CONTEXT_CHANGED` with expected/actual IDs and recovery guidance before executing the next user script. Its per-call marker avoids confusing ordinary returned data with a gateway failure and adds no warm-path RPC.
 
 ## Recovery and persistence
 

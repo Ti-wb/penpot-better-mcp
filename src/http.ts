@@ -1,10 +1,10 @@
 import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Gateway } from './gateway.js';
+import type { GatewayApi } from './gateway.js';
 import { createMcpServer } from './server.js';
 
-export function createHttpApp(gateway: Gateway, token: string) {
+export function createHttpApp(gateway: GatewayApi, token: string) {
   if (token.length < 32) throw new Error('Gateway bearer token must be at least 32 characters');
   const expected = Buffer.from(`Bearer ${token}`);
   const app = express();

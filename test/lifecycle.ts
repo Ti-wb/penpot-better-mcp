@@ -6,6 +6,7 @@ import { mock } from 'node:test';
 import type { Browser } from 'playwright';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { HeadlessAdapter } from '../src/headless-adapter.js';
+import { DocumentWorker } from '../src/document-worker.js';
 import { Gateway } from '../src/gateway.js';
 import { loadConfig } from '../src/config.js';
 import { GatewayError } from '../src/errors.js';
@@ -34,7 +35,7 @@ async function initialization() {
   const invalid = `.state/lifecycle-invalid-${process.pid}.json`;
   await writeFile(invalid, '{invalid-json', {mode: 0o600});
   const adapter = new HeadlessAdapter({...config, storageState: resolve(invalid)});
-  const gateway = new Gateway(adapter, config.baseUrl);
+  const gateway = new DocumentWorker(adapter, config.baseUrl);
   const browsers: Browser[] = [];
   const launch = chromium.launch.bind(chromium);
   const spy = mock.method(chromium, 'launch', async options => {
@@ -48,7 +49,7 @@ async function initialization() {
     assert.equal(adapter['files'].size, 0);
     // Context creation can succeed but relay installation can still fail.
     const routed = new HeadlessAdapter(config);
-    const routeGateway = new Gateway(routed, config.baseUrl);
+    const routeGateway = new DocumentWorker(routed, config.baseUrl);
     const fault = mock.method(routed as any, 'routeMcp', async () => { throw new Error('relay setup fault'); });
     try {
       await assert.rejects(routeGateway.open(targets.files[0].url), /relay setup fault/);
@@ -65,7 +66,7 @@ async function initialization() {
 
 async function navigation() {
   const adapter = new HeadlessAdapter(config);
-  const gateway = new Gateway(adapter, config.baseUrl);
+  const gateway = new DocumentWorker(adapter, config.baseUrl);
   try {
     await adapter['launch']();
     const browser = adapter['browser']!;
@@ -81,12 +82,15 @@ async function navigation() {
 
 async function browserLoss(loss: 'browser' | 'page') {
   const adapter = new HeadlessAdapter(config);
-  const gateway = new Gateway(adapter, config.baseUrl);
+  const otherAdapter = new HeadlessAdapter(config);
+  const gateway = new Gateway(file => file === targets.files[0].id ? adapter : otherAdapter, config.baseUrl);
   const marker = `lifecycle-loss-${randomUUID()}`;
   let release = () => {};
   let cleanupHandle: string | undefined;
   try {
     const other = await gateway.open(targets.files[1].url); assert(other.documentHandle);
+    const otherBrowser = otherAdapter['browser'];
+    await gateway.execute(other.documentHandle, 'storage.faultIsolation=42;return true;', 'deferred');
     const first = await gateway.open(targets.files[0].url); assert(first.documentHandle);
     const alias = await gateway.open(targets.files[0].url); assert(alias.documentHandle);
     let observed = () => {};
@@ -102,6 +106,8 @@ async function browserLoss(loss: 'browser' | 'page') {
     } finally { clearTimeout(timer!); }
     if (loss === 'browser') await adapter['browser']!.close();
     else await adapter['page']!.close();
+    assert.equal(data(await gateway.execute(other.documentHandle, 'return storage.faultIsolation;', 'deferred')).result, 42);
+    assert.equal(otherAdapter['browser'], otherBrowser);
     for (const documentHandle of [first.documentHandle, alias.documentHandle]) {
       await assert.rejects(gateway.flush(documentHandle), errorCode('SAVE_UNCONFIRMED'));
       await assert.rejects(gateway.execute(documentHandle, 'throw new Error("must not dispatch");'), errorCode('SAVE_UNCONFIRMED'));
@@ -138,27 +144,34 @@ async function browserLoss(loss: 'browser' | 'page') {
 
 async function upstreamTimeout() {
   const adapter = new HeadlessAdapter({...config, upstreamHttp:'http://127.0.0.1:14411/mcp', upstreamWs:'ws://127.0.0.1:14412', timeoutMs:30_000});
-  const gateway = new Gateway(adapter, config.baseUrl);
+  const otherAdapter = new HeadlessAdapter(config);
+  const gateway = new Gateway(file => file === targets.files[0].id ? adapter : otherAdapter, config.baseUrl);
   const marker = `lifecycle-timeout-${randomUUID()}`;
   let handle: string | undefined;
   try {
+    const other = await gateway.open(targets.files[1].url); assert(other.documentHandle);
+    const otherBrowser = otherAdapter['browser'];
     const opened = await gateway.open(targets.files[0].url); assert(opened.documentHandle);
     const browser = adapter['browser']!;
     const start = Date.now();
     const results = await Promise.allSettled([
       gateway.execute(opened.documentHandle, `await new Promise(r=>setTimeout(r,6000));${create(marker)}`),
       gateway.execute(opened.documentHandle, create(marker+'-queued')),
+      gateway.execute(other.documentHandle, 'return penpot.currentFile.id;', 'deferred'),
     ]);
     assert.equal(results[0].status, 'rejected'); assert.equal(results[1].status, 'rejected');
     if (results[0].status === 'rejected') { assert(errorCode('EXECUTION_UNKNOWN')(results[0].reason)); assert(results[0].reason.outcomeUnknown); }
     if (results[1].status === 'rejected') assert(errorCode('SAVE_UNCONFIRMED')(results[1].reason));
     assert(!browser.isConnected());
+    assert.equal(results[2].status, 'fulfilled');
+    if (results[2].status === 'fulfilled') assert.equal(data(results[2].value).result, targets.files[1].id);
+    assert.equal(otherAdapter['browser'], otherBrowser); assert(otherBrowser!.isConnected());
     const fresh = await gateway.open(targets.files[0].url); handle=fresh.documentHandle; assert(handle);
     const remaining = 6500 - (Date.now()-start);
     if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
     assert.equal(data(await gateway.execute(handle, count(marker))).result, 0);
     assert.equal(data(await gateway.execute(handle, count(marker+'-queued'))).result, 0);
-    check('sidecar timeout retires the browser before the queue advances; neither late nor queued edits execute');
+    check('sidecar timeout retires only the affected browser before its queue advances; other file stays usable and late/queued edits never execute');
   } finally {
     if (handle) { await gateway.execute(handle, remove(marker)); await gateway.execute(handle, remove(marker+'-queued')); }
     await gateway.shutdown();

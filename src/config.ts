@@ -9,6 +9,7 @@ export interface Config {
   timeoutMs: number;
   idleMs: number;
   diagnostics: boolean;
+  maxWorkers: number;
 }
 
 export function loadConfig(env = process.env): Config {
@@ -17,6 +18,8 @@ export function loadConfig(env = process.env): Config {
   if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname))) throw new Error('Use HTTPS, except for a loopback test site');
   const positive = (value: string | undefined, fallback: number) => { const n = Number(value || fallback); if (!Number.isSafeInteger(n) || n < 1000) throw new Error('Timeouts must be integers >= 1000'); return n; };
   if (env.PENPOT_DIAGNOSTICS !== undefined && !['true', 'false'].includes(env.PENPOT_DIAGNOSTICS)) throw new Error('PENPOT_DIAGNOSTICS must be true or false');
+  const maxWorkers = Number(env.PENPOT_MAX_WORKERS || 2);
+  if (!Number.isSafeInteger(maxWorkers) || maxWorkers < 1 || maxWorkers > 16) throw new Error('PENPOT_MAX_WORKERS must be an integer from 1 to 16');
   return {
     baseUrl: base.origin,
     storageState: resolve(env.PENPOT_STORAGE_STATE || '.state/session.json'),
@@ -26,5 +29,6 @@ export function loadConfig(env = process.env): Config {
     timeoutMs: positive(env.PENPOT_TIMEOUT_MS, 120_000),
     idleMs: positive(env.PENPOT_IDLE_MS, 600_000),
     diagnostics: env.PENPOT_DIAGNOSTICS !== 'false',
+    maxWorkers,
   };
 }
