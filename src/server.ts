@@ -29,7 +29,7 @@ export function createMcpServer(gateway: Gateway) {
     if(args.mode==='fill' && args.format!=='png')throw new GatewayError('INVALID_EXPORT','Image fill export supports PNG only.');
     return gateway.export(args.documentHandle, { shapeId: args.shapeId, format: args.format, mode: args.mode });
   }));
-  server.registerTool('close_document', { description: 'Release a document handle and the active browser. Other handles can reopen their files.', inputSchema: handle }, safe(async args => json(await gateway.closeDocument(args.documentHandle))));
+  server.registerTool('close_document', { description: 'Confirm active pending saves and release this handle. Keeps the editor while other handles remain; closes the browser when the last handle is released. Returns browserReleased and remainingHandles. Idle reclamation also closes the browser after saving.', inputSchema: handle }, safe(async args => json(await gateway.closeDocument(args.documentHandle))));
   server.registerTool('high_level_overview', { description: 'Read the upstream Penpot Plugin API overview with managed-browser instructions.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(async () => {
     const result = await gateway.documentation('high_level_overview', {});
     return { ...result, content: [

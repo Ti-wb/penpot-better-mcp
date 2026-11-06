@@ -10,13 +10,15 @@ MCP 初始化與 `high_level_overview` 都提供相同核心指引。以下為�
 
 文件與頁面 target 綁定在 handle 上。`open_page` 保留同一編輯器的 Plugin storage；切檔、閒置回收、故障重建會清空暫存，所以重要 ID 與批次進度應由呼叫端保存。每次 `open_page` 都產生新 handle，不要任由它們累積到 128 個上限。
 
+關閉已被取代的 handle 會確認當前待儲存工作，但保留其他 handle 正在使用的編輯器；關閉最後一個 handle 才退出瀏覽器。可用回傳的 `browserReleased` 與 `remainingHandles` 確認收尾狀態。預設 10 分鐘閒置回收會退出瀏覽器，下一次呼叫可用原 handle 重新載入。
+
 ## 權限與錯誤
 
 | 回應 | 處理方式 |
 |---|---|
 | `DOCUMENT_CONTEXT_CHANGED` | 該次使用者程式碼尚未執行；明確呼叫 `open_page` 或 `open_document`，使用新 handle |
 | `PLUGIN_PERMISSION_DENIED` | 看 `permission` 欄位；停止重試受限 API，設計內容存取是否可用要分開判斷。腳本可能已完成前段修改，應先讀回 |
-| `SCRIPT_SYNTAX_ERROR` | 修正 JavaScript，縮小腳本並檢查括號／字串。此類別也可能是執行時拋出的 SyntaxError，不能假定全部修改都未發生 |
+| `SCRIPT_SYNTAX_ERROR` | 依 `details.upstreamMessage` 保留的原始錯誤修正 JavaScript，縮小腳本並檢查括號／字串。此類別也可能是執行時拋出的 SyntaxError，不能假定全部修改都未發生 |
 | `EXECUTION_UNKNOWN`／`SAVE_UNCONFIRMED` | 不重送寫入；重新 open 取得 fresh handle，讀回已保存的資料後再調整。新 handle 成功不會替舊寫入背書 |
 | `BUSY` | 等待已有操作完成，再降低併發；超過 32 筆接受中的操作會拒絕 |
 

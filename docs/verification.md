@@ -50,13 +50,21 @@ Docker gateway 的官方 `high_level_overview` 與 `penpot_api_info` 轉送也�
 
 ## 實際設計觀察後的改善
 
-切頁改善以 `npm run test:pages` 在最新 2.18.6 fixture 通過四組驗證：12 次同檔切頁沿用瀏覽器、編輯器與 Plugin storage；不存在頁面保持原頁；直接呼叫 Plugin 切頁後，錯誤 handle 的下一次程式碼在執行前被拒絕，並可透過 `open_page` 恢復；延後寫入經切頁及冷重開仍存在。首輪有待儲存工作時為 802 ms，其餘切頁為 21–28 ms。紀錄為 `test-results/pages.json`。
+切頁改善以 `npm run test:pages` 在最新 2.18.6 fixture 通過四組驗證：12 次同檔切頁沿用瀏覽器、編輯器與 Plugin storage；不存在頁面保持原頁；直接呼叫 Plugin 切頁後，錯誤 handle 的下一次程式碼在執行前被拒絕，並可透過 `open_page` 恢復；延後寫入經切頁及冷重開仍存在。首輪有待儲存工作時為 802 ms，其餘切頁為 21–28 ms。初次量測紀錄為 `test-results/pages-stage1.json`；最後回歸使用 `pages.json`。
 
 同輪單元與 HTTP 協定回歸共 9 項通過。重新查詢官方 `latest`，四個映像 digest 仍與下表一致。
 
 耗時紀錄改善後，單元／HTTP 回歸共 12 項通過，包括排隊時間、巢狀階段不重複計算、超載／錯誤紀錄、內容隱私與紀錄失敗不影響操作。最新版 fixture 以 ABBA 順序比較開啟／停用紀錄，各 200 次暖機讀取與 20 次 1 MiB 回傳：暖機 p50 為 3.41／3.38 ms、p95 為 4.81／4.61 ms；大型回傳 p50 為 56.29／54.87 ms。沒有新增逐次 RPC；這組單機樣本的差異很小，並非統計上已證明零開銷。實測也確認瀏覽器啟動／回收事件及 response 大小。紀錄為 `test-results/diagnostics.json` 與不含 payload 的 `diagnostics.ndjson`。
 
 Agent 指引與錯誤分類已於最新版 2.18.6 及內網 2.18.5 各通過 3 項實測：`user:read` 拒絕被分類為 `PLUGIN_PERMISSION_DENIED`、無效腳本回傳 `SCRIPT_SYNTAX_ERROR`、兩種錯誤後正常讀取與 flush 仍可用。一般使用者回傳的相同錯誤文字不會被誤判。MCP HTTP 回歸確認初始化與概覽提供一致指引。證據為 `test-results/guidance.json`、`guidance-internal.json`。
+
+資源回收改善後，單元／HTTP 回歸共 14 項通過，包括多 handle 共用編輯器、最後 handle 才退出瀏覽器、未儲存時不丟棄 handle、閒置儲存未確認後重新檢查，以及工作／關機期間不觸發閒置回收。兩個環境各用單檔 3,000 圖形驗證，最新版五輪、內網三輪，共 160 次全量讀取、64 次併發遞增與 32 次切頁；每輪都確認數量與座標加總、冷重開持久化、Chromium 程序退出及 relay sockets 清空。所有本次測試圖形與臨時頁面均已清理，最後冷讀確認無殘留。資源數字及限制見 [效能報告](performance.md)，原始紀錄為 `reclamation.json`、`reclamation-internal.json`。
+
+本輪另通過切頁 4 項、生命週期故障 5 項、批次／匯出／持久化 8 項與 SDK 逾時／認證恢復 3 項回歸。最後建置在最新版 stdio 與實際內網 Docker HTTP 完整驗收各 7 項通過，紀錄為 `latest-four-improvements.json`、`internal-docker-four-improvements.json`。Docker 部署已更新。
+
+本機 Codex 已重新載入 MCP 設定，新連線探索為 9 個工具；實際透過 Codex 呼叫 `open_page`、釋放舊 handle、讀取新 handle 及最後回收皆通過，見 `codex-proxy-refresh.json`、`codex-four-improvements.json`。本次正在執行中的 Codex 回合仍保留更新前 8 個工具的探索快照；驗證新功能時應開新對話取得完整清單。
+
+部署核對確認 7 個主要 JS 檔案雜湊與本機最後建置一致、容器 healthy、零重啟。部署後驗收的 18 個操作沒有錯誤，瀏覽器啟動／關閉各 3 次；收尾只剩 Node 與 init，容器約 393 MiB、CPU 0%。沒有把正常關閉誤記為 editor 遺失。紀錄為 `deployment-four-improvements.json`；測試用 Compose 服務已停止，volumes 保留，正式 Proxy 持續運作。
 
 ## 映像版本
 

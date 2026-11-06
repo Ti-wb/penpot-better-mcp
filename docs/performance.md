@@ -53,6 +53,27 @@
 
 Docker 全負載期間，gateway 容器（包含 Chromium）的記憶體峰值為 **2.63 GiB**，CPU 峰值為 **599%**（約 6 個核心）。所有 handle 關閉、Chromium 退出後，容器閒置用量約 **354 MiB**、CPU 0%。這是此合成工作負載的整體成本，不能歸因為 Proxy 轉送本身；但實際部署必須預留這些資源。
 
+## 實際設計觀察後的改善
+
+同檔切頁改用 `open_page`，保持同一編輯器並回傳新 handle。最新版 fixture 的連續 12 次切頁，首筆等待前次儲存約 802 ms，其餘為 21–28 ms；關閉被取代的 handle 會確認儲存，並保留其他 handle 正在使用的編輯器。最後一個 handle 關閉才回收整個瀏覽器。
+
+新增耗時紀錄沒有增加暖路徑的 MCP 往返。以 ABBA 順序比較啟用／停用，各 200 次暖機讀取：p50 為 3.41／3.38 ms，p95 為 4.81／4.61 ms；各 20 次合成 1 MiB 回傳的 p50 為 56.29／54.87 ms。這是紀錄功能開關的比較，不能代替上面的直連／Proxy 對照，也不能推論零開銷。欄位及方法見 [diagnostics.md](diagnostics.md)。
+
+最新版 2.18.6 的資源回收實測在單一檔案建立 3,000 個圖形，完成五輪讀寫／切頁／關閉／重開，共 100 次全量讀取、40 次併發遞增及 20 次切頁。每輪都確認計數及座標加總，交替使用明確關閉和 1.5 秒的測試用閒置期限；正式設定仍為 10 分鐘。
+
+| 資源檢查 | 五輪結果 |
+|---|---|
+| 每輪讀寫後的 Chromium 程序 RSS 加總 | 2,342–2,787 MiB；後四輪落在 2,342–2,464 MiB |
+| 明確關閉最後一個 handle | 約 161–217 ms；儲存已於關閉前確認 |
+| 閒置回收 | 約 1.64–1.67 秒，包含 1.5 秒等待 |
+| 回收後 | 觀測到的 Chromium 程序均退出，relay sockets 為零 |
+| Gateway 與測試 client 共用的 Node 程序 | 回收後 RSS 221–244 MiB，有小幅上升，未據此宣稱不存在長期洩漏 |
+| 生命週期與資料 | 含清理冷讀共 7 次啟動／7 次關閉；持久化檢查及清理均通過 |
+
+此輪未強制 GC；RSS 包含配置器保留的頁面，程序 RSS 加總也可能重複計算共享頁。證據支持瀏覽器與連線能在工作後回收，並不代表使用中的大型 Penpot 編輯器沒有記憶體成本，也不等於多日運行已驗證。結果在 `test-results/reclamation.json`；重現使用 `npm run test:reclamation`，需先建立最新版 fixture。腳本只修改專用檔案中的本次 UUID 前綴圖形及臨時頁面，最後刪除並冷重開確認。
+
+內網 2.18.5 也以單檔 3,000 圖形完成三輪，共 60 次全量讀取、24 次併發遞增與 12 次切頁。每輪的資料校驗、Chromium 程序退出及清理冷讀均通過，含清理共 5 次啟動／5 次關閉。大量讀取後的 Chromium RSS 加總為 1,694–2,740 MiB；回收後測試 Node 為 231–246 MiB。明確關閉約 109–165 ms，1.5 秒測試閒置期限約 1.60 秒完成回收。紀錄為 `test-results/reclamation-internal.json`；使用 `E2E_TARGETS_FILE=.state/acceptance-targets.json PENPOT_STORAGE_STATE=.state/session.json RECLAIM_ROUNDS=3 RECLAIM_REPORT=reclamation-internal.json npm run test:reclamation` 重現。
+
 ## 重現與限制
 
 審查修正後另以實際 Docker gateway、每檔 **1,000 個圖形**做復驗（`load-review-fixed.json`），同樣使用 deferred 加批次末端 flush：

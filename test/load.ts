@@ -192,7 +192,7 @@ try {
     }
   }
   const before=resultData(await through(summary)).result;assert.equal(before.unique,count);
-  await tool(proxy,'close_document',{documentHandle:handle});
+  for(const documentHandle of [...handles])await tool(proxy,'close_document',{documentHandle});
   handle=resultData(await tool(proxy,'open_document',{url:targets.files[1].url})).documentHandle;
   assert.deepEqual(resultData(await through(summary)).result,before);check('bulk writes survive full browser teardown with count, uniqueness and coordinate checksum intact');
   await measure('crossFileOpen',4,async i=>{const d=resultData(await tool(proxy,'open_document',{url:targets.files[i%2].url}));assert(d.documentHandle);});
@@ -204,7 +204,7 @@ try {
       console.log('cleaned',name);
     }
     await directSave();await flush();
-    await tool(proxy,'close_document',{documentHandle:handle});
+    for(const documentHandle of [...handles])await tool(proxy,'close_document',{documentHandle});
     for(const file of targets.files){
       const d=resultData(await tool(proxy,'open_document',{url:file.url}));handle=d.documentHandle;
       assert.equal(resultData(await through(summary)).result.count,0);

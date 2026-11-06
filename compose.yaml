@@ -20,9 +20,15 @@ services:
       PENPOT_UPSTREAM_HTTP: http://upstream:4401/mcp
       PENPOT_UPSTREAM_WS: ws://upstream:4402
       PENPOT_DIAGNOSTICS: ${PENPOT_DIAGNOSTICS:-true}
+      PENPOT_IDLE_MS: ${PENPOT_IDLE_MS:-600000}
       GATEWAY_TOKEN_FILE: /app/.state/gateway-token
       HOST: 0.0.0.0
     volumes: ["./.state:/app/.state:ro"]
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on: [upstream]
     restart: unless-stopped
     healthcheck:

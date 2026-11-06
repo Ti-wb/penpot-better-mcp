@@ -14,7 +14,7 @@ flowchart LR
 
 ## Current adapter
 
-Each process has one authenticated browser context and at most one active editor page. Handles refer to a configured origin, file and optional page. Opening, switching, editing and closing run through one bounded queue. Changing documents closes the previous page after checking the save indicator. Idle browsers are reclaimed; handles can reopen their documents.
+Each process has one authenticated browser context and at most one active editor page. Handles refer to a configured origin, file and optional page. Opening, switching, editing and closing run through one bounded queue. Changing documents closes the previous page after checking the save indicator. Closing a handle confirms pending work but retains the editor while other handles remain; the last close reclaims the browser. Idle browsers are reclaimed; handles can reopen their documents.
 
 The browser loads the real Penpot application and its bundled MCP Plugin. Playwright routes only the configured site's `/mcp/ws` socket to a dedicated official MCP server. The relay uses a random in-memory routing token, shared with this process's upstream HTTP client. The user's original MCP token is not forwarded to the sidecar. Collaboration sockets and backend calls retain their normal authenticated Penpot behavior.
 
@@ -34,6 +34,7 @@ The adapter verifies file/page identity before dispatch. Warm `execute_code` cal
 - `save=deferred` returns execution acknowledgment immediately, with `_meta.saveState=not_confirmed`. A serialized `flush_document` waits for persistence after the batch. This mode also avoids unnecessary persistence waits on reads; it is not a read-only sandbox. Both modes retain the same identity guard and queue.
 - A successful barrier is reused until another execution/save request invalidates it. Normal close does not add another fixed wait after an already confirmed write.
 - Normal close and idle reclamation also await saving. An unconfirmed save retains a live editor. An already lost editor is reclaimed while close still reports `SAVE_UNCONFIRMED`; old handles retain their uncertain status. A transport timeout forcibly closes the browser to stop code with an unknown execution state; a failed script may have partially edited the file.
+- A failed idle reclamation schedules another check at the next idle interval, without replaying code. Accepted operations cancel idle timers and serialize behind any reclamation already in progress. Shutdown stops scheduling new idle checks and rejects new operations.
 - Reopening and reading back a known object is the acceptance check for persistence.
 - Browser session expiry requires a new login. MCP connection polling retries only the fixed read-only identity query. Toolbar UI may remount while loading; actual plugin identity determines readiness. Previous page relay sockets are retired before connecting the next file.
 - Browser/context initialization publishes resources only after setup succeeds. Failed context or relay setup closes the new browser; failed page navigation or plugin setup tears down the incomplete editor, allowing the next open to retry normally.
@@ -45,7 +46,7 @@ The adapter verifies file/page identity before dispatch. Warm `execute_code` cal
 
 ## Extension to scheme C
 
-`DesignAdapter` in `src/adapter.ts` owns `open`, `execute`, `flush`, `exportShape`, documentation, handle release and close operations, without exporting Playwright types. `release(target)` discards handle bookkeeping after its target is no longer reachable through the gateway; it does not flush or close an editor. Introduce a separate backend read adapter for normalized document/page/shape queries and a router deciding which operation needs an editor. Do not expose arbitrary backend RPC or database writes as a shortcut.
+`DesignAdapter` in `src/adapter.ts` owns document/page opening, execution, persistence, export, documentation, handle release and close operations, without exporting Playwright types. `flushPending()` confirms active work without activating a different target, and retires an already lost worker while preserving any uncertain outcome. `release(target)` only discards handle bookkeeping after its target is no longer reachable through the gateway. Introduce a separate backend read adapter for normalized document/page/shape queries and a router deciding which operation needs an editor. Do not expose arbitrary backend RPC or database writes as a shortcut.
 
 For the hybrid phase, add explicit read operations, backend credentials separate from MCP routing tokens, versioned response normalization, revision-aware cache keys, permission revalidation and invalidation after browser writes. Keep full Plugin execution and rendering in the existing adapter until backend equivalents are verified.
 

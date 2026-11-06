@@ -64,7 +64,7 @@ export class HeadlessAdapter implements DesignAdapter {
   }
 
   private markLost(editor: Editor) {
-    if (!editor.lost) this.diagnostics.lifecycle('editor_lost');
+    if (!editor.lost && (this.editor === editor || editor.pending)) this.diagnostics.lifecycle('editor_lost');
     if (editor.pending) {
       // All handles for this file share an epoch. Reopening with a new handle
       // permits readback; no old handle can silently acknowledge lost writes.
@@ -194,7 +194,7 @@ export class HeadlessAdapter implements DesignAdapter {
       const editor: Editor = { target, file: binding.file, page, ready: false, lost: false, lostWrites: false,
         pending: false, saves: new Set(), saveActivity: 0, saveFailed: false, needsSaveCheck: true };
       this.editor = editor;
-      page.on('close', () => { if (this.editor === editor) this.markLost(editor); });
+      page.on('close', () => this.markLost(editor));
       page.on('crash', () => this.markLost(editor));
       editor.devtools = await this.context!.newCDPSession(page);
       this.observeSaves(editor);
@@ -332,7 +332,9 @@ export class HeadlessAdapter implements DesignAdapter {
   async openPage(source: DocumentTarget, target: DocumentTarget) {
     if (source.fileId !== target.fileId || !target.pageId) throw new GatewayError('INVALID_PAGE', 'Select a page in the same file.');
     this.assertCertain(source);
-    await this.activate(source, false);
+    // The explicit destination supersedes the source handle's page. An older
+    // handle in this file should not force a reload of its original page first.
+    if (!this.editor?.ready || this.editor.lost || this.editor.target.fileId !== source.fileId) await this.activate(source, false);
     this.assertCertain(source);
     await this.waitForSave();
     const missing = randomUUID();
@@ -371,6 +373,12 @@ return {fileId:penpot.currentFile.id,pageId:penpot.currentPage.id,pages:penpotUt
     await this.waitForSave();
     this.assertCertain(target);
     return { content: [{ type: 'text', text: JSON.stringify({ fileId: target.fileId, saved: true }) }] };
+  }
+
+  async flushPending() {
+    this.observeLoss();
+    if (this.editor?.lost) await this.close();
+    else await this.waitForSave();
   }
 
   async exportShape(target: DocumentTarget, args: ExportOptions) {
