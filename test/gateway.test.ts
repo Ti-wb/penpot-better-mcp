@@ -43,6 +43,14 @@ test('flags official plain-text failures without misclassifying user return valu
   assert(isUpstreamTaskTimeout({content:[{type:'text',text:timeout}]}));
   assert(!isUpstreamTaskTimeout({content:[{type:'text',text:JSON.stringify({result:timeout})}]}));
   assert(!isUpstreamTaskTimeout({content:[{type:'text',text:'Tool execution failed: Error: user timeout'}]}));
+  const permission = 'Tool execution failed: Error: Error handling task: Permission user:read is not granted';
+  const denied = normalizeUpstreamResult({content:[{type:'text',text:permission}]});
+  assert.deepEqual(JSON.parse((denied.content[0] as {text:string}).text).permission, 'user:read');
+  assert.equal(JSON.parse((denied.content[0] as {text:string}).text).code, 'PLUGIN_PERMISSION_DENIED');
+  const syntax = normalizeUpstreamResult({content:[{type:'text',text:"Tool execution failed: Error: Error handling task: Unexpected token ')'"}]});
+  assert.equal(JSON.parse((syntax.content[0] as {text:string}).text).code, 'SCRIPT_SYNTAX_ERROR');
+  assert.equal(JSON.parse((syntax.content[0] as {text:string}).text).partialEditsPossible, true);
+  assert(!normalizeUpstreamResult({content:[{type:'text',text:JSON.stringify({result:permission})}]}).isError);
 });
 
 test('releases bindings on failed opens, closed handles and shutdown', async () => {
@@ -115,6 +123,10 @@ test('HTTP requires bearer auth, rejects browser origins and serves a real MCP c
     assert.equal((await fetch(endpoint,{method:'POST'})).status,401);
     assert.equal((await fetch(endpoint,{method:'POST',headers:{Authorization:`Bearer ${token}`,Origin:'https://evil.example'}})).status,403);
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint),{requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
+    const instructions = client.getInstructions()!;
+    for (const term of ['open_page', 'NEW handle', 'user:read', 'flush_document', 'Await all async work']) assert(instructions.includes(term));
+    const overview = await client.callTool({name:'high_level_overview',arguments:{}});
+    assert.equal((overview.content as {text:string}[])[0].text, instructions);
     assert((await client.listTools()).tools.some(t=>t.name==='open_document'));
     assert((await client.listTools()).tools.some(t=>t.name==='open_page'));
     const result = await client.callTool({name:'open_document',arguments:{url}});

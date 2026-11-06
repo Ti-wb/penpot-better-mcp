@@ -13,7 +13,17 @@ export function isUpstreamTaskTimeout(result: CallToolResult): boolean {
 // A user returning the same string is JSON-wrapped under `result`, so it does
 // not match this transport-level prefix.
 export function normalizeUpstreamResult(result: CallToolResult): CallToolResult {
-  return result.content.some(item => item.type === 'text' && item.text.startsWith('Tool execution failed:'))
-    ? { ...result, isError: true }
-    : result;
+  const failed = result.content.find(item => item.type === 'text' && item.text.startsWith('Tool execution failed:'));
+  if (failed?.type !== 'text') return result;
+  const message = failed.text.slice('Tool execution failed:'.length).trim();
+  const permission = /^(?:Error: )?(?:Error handling task: )?Permission ([a-z]+:[a-z]+) is not granted$/.exec(message)?.[1];
+  const syntax = /^(?:Error: )?(?:Error handling task: )?(?:SyntaxError: |Unexpected token\b|Unexpected end of input\b)/.test(message);
+  const guidance = permission ? {
+    code: 'PLUGIN_PERMISSION_DENIED', permission, partialEditsPossible: true,
+    message: 'This Penpot MCP plugin has not granted this permission. Avoid the denied API; file edit access is a separate check. Inspect any earlier edits in this script before retrying.',
+  } : syntax ? {
+    code: 'SCRIPT_SYNTAX_ERROR', partialEditsPossible: true,
+    message: 'JavaScript reported a syntax error. Check the script syntax and use smaller chunks. Inspect earlier edits before retrying: code can also throw SyntaxError at runtime.',
+  } : undefined;
+  return { ...result, isError: true, ...(guidance ? {content: result.content.map(item => item === failed ? {type: 'text' as const, text: JSON.stringify(guidance)} : item)} : {}) };
 }
