@@ -75,6 +75,8 @@ flush_document(documentHandle) → saved: true
 
 `deferred` 的成功只表示程式執行完成，**不代表資料已落盤**；回覆的 `_meta.saveState` 為 `not_confirmed`。`wait` 及 `flush_document` 也不是跨系統交易保證。`EXECUTION_UNKNOWN` 或 `SAVE_UNCONFIRMED` 表示結果不確定，應先檢查文件，**不要直接重送寫入**。任意 JavaScript 可能在失敗前完成部分修改。
 
+未確認寫入後若瀏覽器中斷或執行逾時，同檔案的既有 handle 會拒絕後續 `execute_code`／`flush_document`。`inspect_document` 仍可讀取文件資訊，並標記 `_meta.saveState: "unknown"`。請用 `open_document` 取得新 handle，讀回物件確認實際狀態，再決定是否補寫；其他檔案的 handle 可繼續使用。新 handle 不代表舊寫入已保存，確認後可關閉舊 handle。
+
 同一 worker 依序處理操作，最多接受 32 個執行中／排隊請求；超出會明確回傳 `BUSY`。一次程式碼可修改多個物件，通常比逐一呼叫工具有效率；大量讀取應只回傳需要的欄位及範圍。
 
 ## 本機開發
@@ -109,10 +111,13 @@ npm run fixture:setup
 E2E_TARGETS_FILE=.state/latest-targets.json PENPOT_STORAGE_STATE=.state/latest-session.json E2E_REPORT=latest.json npm run test:e2e
 npm run test:recovery
 npm run test:batch
+# 四項審查問題的故障回歸（需要額外的短逾時 sidecar）：
+docker compose -f test/compose.yaml --profile faults up -d penpot-mcp-timeout
+npm run test:lifecycle
 
 docker compose down
 docker compose -f compose.dev.yaml down
-docker compose -f test/compose.yaml down
+docker compose -f test/compose.yaml --profile faults down
 ```
 
 測試 Compose 的映像固定為本次從官方 `latest` 拉取的 2.18.6 digest；重新驗證新版本時應一起更新 frontend、backend、exporter、MCP。測試帳號與簡化驗證設定只用於 loopback fixture，不能作為正式站設定。

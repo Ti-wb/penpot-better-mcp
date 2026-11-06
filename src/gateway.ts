@@ -28,10 +28,12 @@ export class Gateway {
     return this.serial(async () => {
       if (this.documents.size >= 128) throw new GatewayError('DOCUMENT_LIMIT', 'Close unused document handles first.');
       const target = parseDocument(url, this.baseUrl);
-      const result = await this.adapter.open(target);
-      if (result.isError) return { result };
-      const documentHandle = randomUUID(); this.documents.set(documentHandle, target);
-      return { documentHandle, fileId: target.fileId, pageId: target.pageId, result };
+      try {
+        const result = await this.adapter.open(target);
+        if (result.isError) { this.adapter.release(target); return { result }; }
+        const documentHandle = randomUUID(); this.documents.set(documentHandle, target);
+        return { documentHandle, fileId: target.fileId, pageId: target.pageId, result };
+      } catch (error) { this.adapter.release(target); throw error; }
     });
   }
   inspect(handle: string) { return this.serial(() => this.adapter.open(this.target(handle))); }
@@ -39,6 +41,10 @@ export class Gateway {
   flush(handle: string) { return this.serial(() => this.adapter.flush(this.target(handle))); }
   export(handle: string, args: ExportOptions) { return this.serial(() => this.adapter.exportShape(this.target(handle), args)); }
   documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>) { return this.serial(() => this.adapter.documentation(name, args)); }
-  closeDocument(handle: string) { return this.serial(async () => { this.target(handle); await this.adapter.close(); this.documents.delete(handle); return { closed: true }; }); }
-  async shutdown() { clearTimeout(this.idle); await this.queue; clearTimeout(this.idle); await this.adapter.close(); this.documents.clear(); }
+  closeDocument(handle: string) { return this.serial(async () => { const target = this.target(handle); await this.adapter.close(); this.adapter.release(target); this.documents.delete(handle); return { closed: true }; }); }
+  async shutdown() {
+    clearTimeout(this.idle); await this.queue; clearTimeout(this.idle); await this.adapter.close();
+    for (const target of this.documents.values()) this.adapter.release(target);
+    this.documents.clear();
+  }
 }

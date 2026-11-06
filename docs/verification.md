@@ -27,13 +27,26 @@ Docker gateway 的官方 `high_level_overview` 與 `penpot_api_info` 轉送也�
 ## 故障與邊界
 
 - 最新版隔離 fixture 實測 3/3 通過：上游執行逾時回傳 `EXECUTION_UNKNOWN`、重建瀏覽器後讀回相同文件、沒有登入 cookie 時回傳 `AUTH_REQUIRED`。
-- 自動化回歸測試 7/7 通過：連結解析、站點／分享連結邊界、序列化與失敗後恢復、不重送不確定的寫入及錯誤遮罩、HTTP 授權與真實 MCP 協定、deferred／flush 順序、官方工具錯誤正規化。
+- 自動化回歸測試 8/8 通過：連結解析、站點／分享連結邊界、序列化與失敗後恢復、不重送不確定的寫入及錯誤遮罩、HTTP 授權與真實 MCP 協定、deferred／flush 順序、官方工具錯誤正規化，以及失敗／關閉時回收 handle 資料。
 - 最新版隔離 fixture 的補充驗收 8/8 通過：alternate query URL 正規化、保留使用者日誌與 Plugin storage、工具錯誤、延後的後端儲存請求與 flush、冷重開持久化、SVG XML、原尺寸 PNG fill 匯出，以及意外切檔時拒絕寫入。
 - 官方 4 個公開工具與其參數已逐項比對；完整覆蓋範圍及未完成事項見 [功能矩陣](functionality.md)。
 - TypeScript 檢查、建置與 Docker 映像建置通過。
 - Git 與 Docker context 排除 `.state`；session 與 gateway token 檔權限為 `0600`。
 
 驗收發現並修正一個持久化競態：Penpot 的 pending 指示器有 debounce，立即查詢可能仍看到前一次的 saved。Gateway 現在等待 saved 狀態穩定及儲存請求結束，再允許切檔／正常關閉。跨檔案及冷重開驗收用來確認實際後端持久化，單看工具成功回覆不算通過。
+
+## 獨立審查修正
+
+對 `d68a177` 的審查重現了四項問題，修正後以 `test:lifecycle` 在隔離 2.18.6 fixture 完成 5/5 故障回歸：
+
+| 審查問題 | 修正與驗證 |
+|---|---|
+| 瀏覽器遺失後 flush 誤報成功 | 分別測試關閉整個瀏覽器與單一頁面；同檔案所有舊 handle 均回 `SAVE_UNCONFIRMED`，檢查或新 handle 儲存不會清除舊 handle 的不確定狀態。關閉已遺失的 editor 會釋放資源並仍回報不確定結果。新 handle 可讀回並繼續操作，其他檔案不受影響。 |
+| 官方 sidecar 先逾時，舊腳本繼續執行 | 使用 2 秒 sidecar／30 秒 Gateway timeout，確認回 `EXECUTION_UNKNOWN` 前瀏覽器已退出，延遲寫入與佇列中的後續寫入均未發生。SDK 先逾時的既有測試也已加入舊 handle／新 handle 的驗證。 |
+| 載入失敗後無法重試 | 攔截首次導航讓它失敗；無需手動清理，下一次開檔即可成功。 |
+| 初始化失敗洩漏 Chromium | 連續三次無效 storageState 與一次 relay 安裝失敗後，所有啟動的 Chromium 均已退出，handle 資料無殘留。 |
+
+未確認不代表一定沒有寫入：只關閉頁面時，Penpot 仍可能完成最後一次儲存。錯誤後必須透過新 handle 讀回實際結果，不能以重新連線成功推論舊寫入已保存。
 
 ## 映像版本
 
@@ -50,7 +63,7 @@ Gateway 使用 Playwright 1.63.0 的官方容器映像，亦固定 digest。內�
 
 ## 重現與證據
 
-請依 [README](../README.md) 啟動 sidecar、建立隔離 fixture，執行 `npm test`、`npm run test:e2e`、`npm run test:recovery`、`npm run test:batch` 與 `npm run test:load`。本次報告保存在未追蹤的 `test-results/`：`internal.json`、`internal-docker-after-load.json`、`latest-after-load.json`、`recovery.json`、`batch.json`、`tool-surface.json` 及 `load-*.json`；PNG 證據在同目錄。這些檔案不含 session 或 bearer token。
+請依 [README](../README.md) 啟動 sidecar、建立隔離 fixture，執行 `npm test`、`npm run test:e2e`、`npm run test:recovery`、`npm run test:batch`、`npm run test:lifecycle` 與 `npm run test:load`。最新故障回歸結果在未追蹤的 `test-results/lifecycle.json`、`recovery.json`；正常功能重跑結果為 `batch.json`、`latest-after-review-fixes.json`、`internal-docker-after-review-fixes.json`。修正後的 1,000 圖形復驗見 `load-review-fixed.json`。先前報告與 PNG 證據亦保留在同目錄。這些檔案不含 session 或 bearer token。
 
 ## 大量讀寫
 

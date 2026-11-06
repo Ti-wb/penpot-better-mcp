@@ -55,6 +55,16 @@ Docker 全負載期間，gateway 容器（包含 Chromium）的記憶體峰值�
 
 ## 重現與限制
 
+審查修正後另以實際 Docker gateway、每檔 **1,000 個圖形**做復驗（`load-review-fixed.json`），同樣使用 deferred 加批次末端 flush：
+
+| 操作 | 樣本數／路徑 | 官方直連 p50 | Docker Proxy p50 |
+|---|---:|---:|---:|
+| 簡單讀取 | 60 | 2.96 ms | 6.98 ms |
+| 全量讀取，約 0.53 MB | 5 | 386.66 ms | 389.90 ms |
+| 一次更新 100 圖形 | 2 | 2,534.93 ms | 2,589.72 ms |
+
+簡單讀取的額外時間約 4.02 ms，Proxy p95 為 8.47 ms；新增 handle 狀態檢查沒有增加上游呼叫。8 路讀取、24 次併發遞增、64 次突發請求、冷重開讀回與全部 2,000 個圖形的清理均通過。這是較小資料量的修正復驗；上面的 3,000 圖形數字保留其原始測試範圍，寫入的 2 個樣本也不足以推論尾端延遲。
+
 ```bash
 docker compose -f compose.dev.yaml up -d
 E2E_TARGETS_FILE=.state/acceptance-targets.json LOAD_PHASE=optimized npm run test:load
