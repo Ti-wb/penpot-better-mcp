@@ -121,6 +121,11 @@ docker compose up -d --force-recreate gateway
 - 每個 Gateway 最多 128 個 handles、128 個接受中的操作，每檔上限 32 個操作。操作佇列已滿時回覆 `BUSY`；JavaScript 上限 100,000 字元，HTTP request body 上限 1 MB。
 - Gateway 在已部署 Plugin 的權限範圍內轉送 API 操作，不代表每個 API 方法均經驗證。目前編輯仍透過 Chromium，直接存取後端 API 是後續擴充方向。
 
+## Roadmap／未來規劃
+
+- [ ] 更低成本、更快速的大量讀取，不依靠瀏覽器。
+- [ ] 更低成本、更快速的大量寫入。
+
 ## 開發與文件
 
 ```bash
