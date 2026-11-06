@@ -2,22 +2,18 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { createServer, type AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { CallToolResultSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { HeadlessAdapter } from '../src/headless-adapter.js';
-import { loadConfig } from '../src/config.js';
+import { loadFixture, data, writeReport } from './support.js';
 import { parseDocument } from '../src/document.js';
 
-const targets=JSON.parse(await readFile('.state/latest-targets.json','utf8'));
-assert.equal(targets.base,'http://127.0.0.1:19001');
-assert(targets.files.every((f:{name:string})=>f.name.startsWith('Headless acceptance ')));
-process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve('.runtime/browsers');
-const config=loadConfig({...process.env,PENPOT_BASE_URL:targets.base,PENPOT_STORAGE_STATE:'.state/latest-session.json'});
+const { targets, config } = await loadFixture({ localOnly: true });
 const portServer=createServer().listen(0,'127.0.0.1');await once(portServer,'listening');
 const port=(portServer.address() as AddressInfo).port;await new Promise<void>(r=>portServer.close(()=>r()));
 const token=randomBytes(32).toString('hex'),tokenFile=resolve(`.runtime/shutdown-token-${randomUUID()}`);
@@ -31,7 +27,6 @@ const marker='__shutdown_'+randomUUID(),checks:string[]=[];
 const report:Record<string,unknown>={at:new Date().toISOString(),site:targets.base,status:'failed',marker,checks};
 const client=new Client({name:'shutdown-acceptance',version:'1'});
 const cleanup=new HeadlessAdapter(config),target=parseDocument(targets.files[0].url,targets.base);
-function data(result:CallToolResult){assert(!result.isError,JSON.stringify(result.content));return JSON.parse((result.content.find(c=>c.type==='text') as {text:string}).text);}
 async function call(name:string,args:Record<string,unknown>){return CallToolResultSchema.parse(await client.callTool({name,arguments:args},CallToolResultSchema,{timeout:180_000}));}
 async function until(predicate:()=>boolean,timeout=30_000){const end=Date.now()+timeout;while(!predicate()){assert(Date.now()<end,'shutdown acceptance timed out');assert(child.exitCode===null,'child exited before recovery: '+output.slice(-1000));await delay(25);}}
 const check=(s:string)=>{checks.push(s);console.log('PASS',s);};
@@ -70,5 +65,5 @@ try {
     assert.equal(data(await cleanup.execute(target,`return penpotUtils.findShapes(s=>s.name===${JSON.stringify(marker)}).length;`,'deferred')).result,0);
     check('owned shutdown test shape removed and cleanup verified after cold reopen');
   } catch(error){report.status='failed';throw error;}
-  finally {await cleanup.close();await rm(tokenFile,{force:true});await mkdir('test-results',{recursive:true});await writeFile('test-results/shutdown-review.json',JSON.stringify(report,null,2));await writeFile('test-results/shutdown-review.log',output);}
+  finally {await cleanup.close();await rm(tokenFile,{force:true});await writeReport('shutdown.json',report);await writeFile('test-results/shutdown.log',output);}
 }

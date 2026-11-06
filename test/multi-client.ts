@@ -1,20 +1,16 @@
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { AddressInfo } from 'node:net';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { loadConfig } from '../src/config.js';
+import { loadFixture, body, writeReport } from './support.js';
 import { parseDocument, targetPage } from '../src/document.js';
 
-assert(process.env.E2E_TARGETS_FILE, 'Set E2E_TARGETS_FILE to dedicated acceptance files.');
-const targets=JSON.parse(await readFile(process.env.E2E_TARGETS_FILE,'utf8'));
-assert.equal(targets.files.length,2);
-assert(targets.files.every((f:{name:string})=>f.name.startsWith('Headless acceptance ')));
+const { targets, config } = await loadFixture();
 const legacy=!!process.env.MULTI_BASELINE_DIR;
 const workers=Number(process.env.MULTI_WORKERS || 2);
 const source=legacy?pathToFileURL(resolve(process.env.MULTI_BASELINE_DIR!)+'/'):new URL('../src/',import.meta.url);
@@ -22,8 +18,6 @@ const {Gateway}=await import(new URL('gateway.js',source).href);
 const {HeadlessAdapter}=await import(new URL('headless-adapter.js',source).href);
 const {Diagnostics}=await import(new URL('diagnostics.js',source).href);
 const {createHttpApp}=await import(new URL('http.js',source).href);
-process.env.PLAYWRIGHT_BROWSERS_PATH ||= resolve('.runtime/browsers');
-const config=loadConfig({...process.env,PENPOT_BASE_URL:targets.base});
 const events:Record<string,any>[]=[];
 const diagnostics=new Diagnostics((event:Record<string,any>)=>events.push(event));
 const gateway=legacy?new Gateway(new HeadlessAdapter(config,diagnostics),targets.base,600_000,diagnostics)
@@ -31,15 +25,14 @@ const gateway=legacy?new Gateway(new HeadlessAdapter(config,diagnostics),targets
 const bearer=randomBytes(32).toString('hex');
 const server=createHttpApp(gateway,bearer).listen(0,'127.0.0.1');
 await new Promise<void>(r=>server.once('listening',r));
-const endpoint=process.env.MULTI_PROXY_URL || `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
-const token=process.env.MULTI_PROXY_URL?(await readFile('.state/gateway-token','utf8')).trim():bearer;
+const endpoint=process.env.E2E_HTTP_URL || `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+const token=process.env.E2E_HTTP_URL?(await readFile(process.env.GATEWAY_TOKEN_FILE || '.state/gateway-token','utf8')).trim():bearer;
 const clients=Array.from({length:4},(_,i)=>new Client({name:`multi-agent-${i}`,version:'1'}));
 const handles=new Set<string>(), pages:string[]=[], roots:string[]=[], urls:string[]=[];
 const prefix='__multi_'+randomUUID()+':';
-const report:Record<string,any>={at:new Date().toISOString(),site:targets.base,externalProxy:!!process.env.MULTI_PROXY_URL,mode:legacy?'legacy-serial':`pool-${workers}`,clients:4,ownedPrefix:prefix,roots,pages,status:'failed',checks:[],timings:{}};
-async function checkpoint(){await mkdir('test-results',{recursive:true});await writeFile('test-results/'+(process.env.MULTI_REPORT || 'multi-client.json'),JSON.stringify(report,null,2));}
+const report:Record<string,any>={at:new Date().toISOString(),site:targets.base,externalProxy:!!process.env.E2E_HTTP_URL,mode:legacy?'legacy-serial':`pool-${workers}`,clients:4,ownedPrefix:prefix,roots,pages,status:'failed',checks:[],timings:{}};
+const checkpoint=()=>writeReport(process.env.MULTI_REPORT || 'multi-client.json',report);
 const check=(s:string)=>{report.checks.push(s);console.log('PASS',s);};
-function body(result:CallToolResult){const text=result.content.find(c=>c.type==='text');assert(text?.type==='text');return JSON.parse(text.text);}
 async function call(i:number,name:string,args:Record<string,unknown>) {
   const result=CallToolResultSchema.parse(await clients[i].callTool({name,arguments:args},CallToolResultSchema,{timeout:180_000}));
   assert(!result.isError,JSON.stringify(result.content));
@@ -83,7 +76,7 @@ try {
 
   for(let i=0;i<2;i++)pages.push(await execute(0,sameHandles[0],`const p=penpot.createPage();p.name=${JSON.stringify(prefix+'page-'+i)};return p.id;`));
   await checkpoint();
-  const pageHandles=[];
+  const pageHandles:string[]=[];
   for(let i=0;i<4;i++)pageHandles.push(body(await call(i,'open_page',{documentHandle:sameHandles[i],pageId:pages[i%2]})).documentHandle);
   const pageStart=performance.now();
   await Promise.all(clients.map(async(_,i)=>{
@@ -142,7 +135,7 @@ try {
   finally {
     await Promise.allSettled(clients.map(client=>client.close()));await gateway.shutdown();
     server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
-    report.requestCount=process.env.MULTI_PROXY_URL ? null : events.filter(e=>e.event==='request').length;
+    report.requestCount=process.env.E2E_HTTP_URL ? null : events.filter(e=>e.event==='request').length;
     await checkpoint();
   }
 }
