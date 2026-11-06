@@ -10,12 +10,13 @@ import { createHttpApp } from './http.js';
 import { Diagnostics } from './diagnostics.js';
 import { GatewayError } from './errors.js';
 import { createShutdownHandler } from './shutdown.js';
+import { BackendReader } from './backend-reader.js';
 
 async function main() {
   if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync('.runtime/browsers')) process.env.PLAYWRIGHT_BROWSERS_PATH = resolve('.runtime/browsers');
   const config = loadConfig();
   const diagnostics = new Diagnostics(config.diagnostics ? record => console.error(JSON.stringify(record)) : undefined);
-  const gateway = new Gateway(() => new HeadlessAdapter(config, diagnostics), config.baseUrl, config.idleMs, diagnostics, config.maxWorkers);
+  const gateway = new Gateway(() => new HeadlessAdapter(config, diagnostics), config.baseUrl, config.idleMs, diagnostics, config.maxWorkers, new BackendReader(config, diagnostics));
   let closeTransport: () => Promise<void>;
   let mcp: ReturnType<typeof createMcpServer> | undefined;
   if (process.argv.includes('--http')) {

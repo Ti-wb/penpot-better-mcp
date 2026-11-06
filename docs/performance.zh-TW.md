@@ -2,6 +2,8 @@
 
 [English](performance.md) | **繁體中文** | [README](../README.zh-TW.md)
 
+無瀏覽器讀取 MVP 的冷／暖速度與記憶體對照，見[無瀏覽器讀取](browserless-reads.zh-TW.md)。下列數據涵蓋原有 Plugin 路徑。
+
 **2026-11-06 的量測紀錄**：6 vCPU、約 11.2 GiB RAM 的 headless Linux VM，主要使用內網 Penpot 2.18.5 與官方 2.18.6 MCP sidecar。下列負載與記憶體指標來自不同量測，不能互相套用為容量估計。
 
 ## 讀寫開銷

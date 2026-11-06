@@ -2,6 +2,8 @@
 
 **English** | [繁體中文](performance.zh-TW.md) | [README](../README.md)
 
+For the browserless read MVP and its separate cold/warm/memory comparison, see [browserless reads](browserless-reads.md). The measurements below cover the original Plugin path.
+
 Measurements recorded on **2026-11-06**: a headless Linux VM with 6 vCPU and about 11.2 GiB RAM, primarily internal Penpot 2.18.5 with the official 2.18.6 MCP sidecar. Workloads and memory metrics below are separate measurements, not interchangeable capacity estimates.
 
 ## Read/write overhead

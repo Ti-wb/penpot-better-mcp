@@ -19,11 +19,11 @@ The [official Penpot MCP workflow](https://help.penpot.app/mcp/) connects a plug
 | Run multiple agents | MCP uses the active tab's context | Different files run in parallel; calls to the same file, including different pages, run in sequence |
 | Work on a Linux VM | Arrange a running browser and plugin session | Run the supplied Docker setup without a desktop or `DISPLAY` |
 
-Operations still use the official MCP and Plugin API under the logged-in user's Penpot permissions. See the [upstream project](https://github.com/penpot/penpot/tree/develop/mcp) for the underlying protocol and tools.
+Editing and rendering use the official MCP and Plugin API. The `read_document` MVP reads saved data directly from the backend under the same logged-in account. See the [upstream project](https://github.com/penpot/penpot/tree/develop/mcp) for the underlying protocol and tools.
 
 ## Resource requirements
 
-**The computer running this gateway automatically runs headless Chromium.** It needs CPU and RAM for full Penpot editors. Large files, images, and more simultaneously open files increase that cost; the browser pool limits their number, not each editor's memory usage.
+**Editing and rendering automatically run headless Chromium on the gateway host.** Pure `read_document` calls do not launch a browser. It needs CPU and RAM for full Penpot editors. Large files, images, and more simultaneously open files increase that cost; the browser pool limits their number, not each editor's memory usage.
 
 Allow several GiB of available RAM and CPU headroom. One measured four-client/PNG workload peaked at about **2.3 GiB for the gateway container**; this is a workload-specific observation, not a minimum requirement or upper bound. The [performance notes](docs/performance.md) explain the measurements and limitations.
 
@@ -100,6 +100,7 @@ To stop the service, use `docker compose down`. The gateway drains accepted oper
 
 | Tool | Purpose |
 |---|---|
+| `read_document` | Read saved file/page summaries and selected shape fields directly over HTTP; no browser or handle |
 | `open_document` | Open a workspace URL and return a `documentHandle` |
 | `inspect_document` | Inspect document information and recovery status |
 | `open_page` | Return a handle for another page, keeping the old handle bound to its original page |
@@ -110,7 +111,7 @@ To stop the service, use `docker compose down`. The gateway drains accepted oper
 | `high_level_overview` | Read official usage guidance and gateway instructions |
 | `penpot_api_info` | Look up Plugin API types and members |
 
-Open a document, read the relevant API guidance, inspect the design, then make focused edits. `execute_code` defaults to `save="wait"`. For frequent reads or batched writes, `save="deferred"` avoids waiting for save confirmation on every call; finish writes with `flush_document`. A deferred reply confirms execution, not persistence.
+For saved-data reads, start with `read_document({url})`; see the [browserless read guide](docs/browserless-reads.md) for pagination and field selection. For editing, open a document, read the API guidance, inspect the design, then make focused edits. `execute_code` defaults to `save="wait"`. For frequent reads or batched writes, `save="deferred"` avoids waiting for save confirmation on every call; finish writes with `flush_document`. A deferred reply confirms execution, not persistence.
 
 For multi-agent work, put dependent read/compute/write steps in one `execute_code` call. Scheduling protects individual calls, not an entire agent workflow or a transaction. It does not lock human editors or other gateways. On `EXECUTION_UNKNOWN` or `SAVE_UNCONFIRMED`, open a fresh handle and read back before deciding what to do; do not blindly replay writes. See the [agent guide](docs/agent-guide.md).
 
@@ -119,11 +120,11 @@ For multi-agent work, put dependent read/compute/write steps in one `execute_cod
 - One logged-in user and one Penpot site per gateway. Supported inputs are **workspace URLs**; viewer/share links and access to other sites are not supported.
 - A valid browser session is required. Automatic SSO/MFA login and multi-tenant isolation are not implemented; an existing authorized Playwright `storageState` can be supplied as `.state/session.json`.
 - Per gateway: up to 128 handles and 128 accepted operations, with 32 operations per file. A full operation queue returns `BUSY`; JavaScript is limited to 100,000 characters and HTTP request bodies to 1 MB.
-- The gateway forwards Plugin API operations within the deployed plugin's permissions. This does not mean every API method has been verified. Editing currently uses Chromium; direct backend API access is a future extension.
+- The gateway forwards Plugin API operations within the deployed plugin's permissions. This does not mean every API method has been verified. Editing uses Chromium. `read_document` exposes saved backend JSON, not computed Plugin state or rendered images.
 
 ## Roadmap
 
-- [ ] Faster, lower-cost bulk reads without relying on a browser.
+- [ ] Faster, lower-cost bulk reads without relying on a browser — [structured read MVP](docs/browserless-reads.md) available; selective backend fetches remain future work.
 - [ ] Faster, lower-cost bulk writes.
 
 ## Development and documentation

@@ -13,14 +13,15 @@ flowchart LR
   U <--> R[WebSocket relay]
   R <--> P[Headless Chromium / official Plugin]
   P --> B[Penpot backend / signed-in session]
-  A -. Future structured reads .-> D[Backend API adapter]
-  D -. Backend authorization .-> B
+  Q1 --> D[BackendReader / saved JSON and ETag cache]
+  Q2 --> D
+  D --> B
 ```
 
 ## Scheduling and connections
 
 - Workers are keyed by normalized file ID. Pages, team URL variants, and UUID casing for one file share a queue. Each file has its own adapter, browser, context, editor, and MCP routing token.
-- The pool defaults to two browsers and reclaims only idle workers after confirming saves. There are at most 32 accepted operations per file, 128 globally, and 128 handles, including reservations during opening. API documentation requests do not allocate a browser.
+- The pool defaults to two browsers and reclaims only idle workers after confirming saves. There are at most 32 accepted operations per file, 128 globally, and 128 handles, including reservations during opening. API documentation and `read_document` requests do not allocate a browser. Saved reads use the same file queue and flush pending writes; they do not consume a new browser slot.
 - Playwright reroutes only the configured site's `/mcp/ws`. Collaboration sockets and backend requests keep Penpot's original authentication. Each file's HTTP client and plugin use the same random routing token.
 - Sidecar tokens pair connections; they do not authorize users. Sidecar ports remain private. A gateway's bearer token or stdio process represents one trusted identity; document handles do not add an authorization boundary.
 
@@ -48,6 +49,7 @@ Each operation emits a JSON line to stderr; stdio stdout is reserved for MCP. `P
 | `workerWaitMs` | Waiting for browser capacity or reclamation |
 | `activationMs` | Initialization/page switching, excluding nested upstream, save, and cleanup time |
 | `upstreamMs`, `upstreamCalls` | MCP round-trip time/count, including serialization, network, and Plugin execution |
+| `backendMs`, `backendCalls`, `cacheRevalidations` | Saved-file HTTP/decode time, request count and validated 304 hits |
 | `saveMs`, `cleanupMs` | Save confirmation and resource cleanup, without double-counting cleanup |
 | `totalMs` | Includes queue time; excludes frontend HTTP transport and agent thinking |
 | `responseContentBytes` | UTF-8 size of content text/base64, not total wire size |
@@ -61,6 +63,6 @@ Shutdown failures always log `shutdown_failed`, `errorCode`, and `retryMs`, even
 
 Login saves only Playwright storageState with file mode `0600`, excluded from Git, images, and logs. Automatic SSO/MFA session renewal is not implemented. JavaScript execution is trusted code under one account, without tenant isolation; viewer links cannot gain editor permissions through the gateway.
 
-`DesignAdapter` exposes open, execute, save, export, and reclamation without Playwright types. A future backend read adapter would need separate backend authorization, versioned data formats, revision caching, invalidation after writes, and permission rechecks. Multiple users additionally require identity-to-worker mapping, isolated sessions, and quotas.
+`DesignAdapter` exposes open, execute, save, export, and reclamation without Playwright types. `BackendReader` uses scoped session cookies, fixed-origin HTTP requests, and permission-aware ETag validation on every read. It retains at most four serialized files / 32 MiB, with at most two concurrent reads and no stale fallback. The [browserless read guide](browserless-reads.md) explains data and compatibility boundaries. Multiple users additionally require identity-to-worker mapping, isolated sessions, and quotas.
 
 Upstream references: [MCP architecture](https://github.com/penpot/penpot/tree/develop/mcp), [connection setup](https://help.penpot.app/mcp/), [token pairing](https://github.com/penpot/penpot/blob/1a80e98e623f962fe91c9971a5c2bc8617677a4b/mcp/packages/server/src/McpAuthentication.ts), [save debounce](https://github.com/penpot/penpot/blob/2.18.5/frontend/src/app/main/data/persistence.cljs). Toolbar controls, socket paths, and save indicators are version-sensitive; run [real-instance acceptance](testing.md) after upgrades.

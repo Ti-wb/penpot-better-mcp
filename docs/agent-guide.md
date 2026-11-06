@@ -4,6 +4,8 @@
 
 MCP initialization and `high_level_overview` provide the same core instructions.
 
+For saved summaries or shape data, use `read_document({url})` first; it needs no browser or handle. Select `view: "shapes"`, `pageId`, `fields` and `limit`/`offset`; pass the returned `snapshotId` on subsequent batches. Restart on `SNAPSHOT_CHANGED`. See [browserless reads](browserless-reads.md). Use the workflow below when editing or rendering.
+
 ## Workflow
 
 1. Call `open_document({url})` to obtain a handle; use `inspect_document` for the page list. The gateway starts the headless editor.

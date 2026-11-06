@@ -61,6 +61,9 @@ export class DocumentWorker {
     });
   }
   inspect(handle: string) { return this.serial('inspect_document', () => this.adapter.open(this.target(handle))); }
+  readSaved<T>(task: () => Promise<T>) {
+    return this.serial('read_document', async () => { await this.adapter.flushPending(); return task(); });
+  }
   openPage(handle: string, pageId: string) {
     return this.serial('open_page', async () => {
       if (this.documents.size >= 128) throw new GatewayError('DOCUMENT_LIMIT', 'Close unused document handles first.');

@@ -26,9 +26,9 @@ export class WorkerPool {
     return {
       id: slot.id,
       run: async <T>(operation: Operation, task: () => Promise<T>) => {
-        // Closing an evicted handle must not evict another file just to reserve
-        // a browser slot; close/flushPending never launch a browser.
-        if (operation === 'close_document') {
+        // Saved reads and closing evicted handles need no new browser slot.
+        // Resident workers still acquire their slot to exclude concurrent eviction.
+        if (operation === 'close_document' || operation === 'read_document') {
           await slot.closing;
           if (!this.resident.has(slot)) return task();
         }
