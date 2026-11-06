@@ -36,7 +36,7 @@ const token=process.env.MULTI_PROXY_URL?(await readFile('.state/gateway-token','
 const clients=Array.from({length:4},(_,i)=>new Client({name:`multi-agent-${i}`,version:'1'}));
 const handles=new Set<string>(), pages:string[]=[], roots:string[]=[], urls:string[]=[];
 const prefix='__multi_'+randomUUID()+':';
-const report:Record<string,any>={at:new Date().toISOString(),site:targets.base,mode:legacy?'legacy-serial':`pool-${workers}`,clients:4,ownedPrefix:prefix,roots,pages,status:'failed',checks:[],timings:{}};
+const report:Record<string,any>={at:new Date().toISOString(),site:targets.base,externalProxy:!!process.env.MULTI_PROXY_URL,mode:legacy?'legacy-serial':`pool-${workers}`,clients:4,ownedPrefix:prefix,roots,pages,status:'failed',checks:[],timings:{}};
 async function checkpoint(){await mkdir('test-results',{recursive:true});await writeFile('test-results/'+(process.env.MULTI_REPORT || 'multi-client.json'),JSON.stringify(report,null,2));}
 const check=(s:string)=>{report.checks.push(s);console.log('PASS',s);};
 function body(result:CallToolResult){const text=result.content.find(c=>c.type==='text');assert(text?.type==='text');return JSON.parse(text.text);}
@@ -142,7 +142,7 @@ try {
   finally {
     await Promise.allSettled(clients.map(client=>client.close()));await gateway.shutdown();
     server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
-    report.requestCount=events.filter(e=>e.event==='request').length;
+    report.requestCount=process.env.MULTI_PROXY_URL ? null : events.filter(e=>e.event==='request').length;
     await checkpoint();
   }
 }
