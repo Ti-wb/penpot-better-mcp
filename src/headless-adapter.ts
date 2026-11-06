@@ -9,6 +9,7 @@ import type { Config } from './config.js';
 import type { DocumentTarget } from './document.js';
 import type { DesignAdapter, ExportOptions, SaveMode } from './adapter.js';
 import { GatewayError, publicError } from './errors.js';
+import { Diagnostics } from './diagnostics.js';
 import { isUpstreamTaskTimeout, normalizeUpstreamResult } from './upstream-result.js';
 
 interface FileState { epoch: number; handles: number; }
@@ -37,7 +38,7 @@ export class HeadlessAdapter implements DesignAdapter {
   private readonly sockets = new Set<WebSocket>();
   private readonly files = new Map<string, FileState>();
   private readonly bindings = new WeakMap<DocumentTarget, Binding>();
-  constructor(private readonly config: Config) {}
+  constructor(private readonly config: Config, private readonly diagnostics = new Diagnostics()) {}
 
   private get page() { return this.editor?.page; }
 
@@ -63,6 +64,7 @@ export class HeadlessAdapter implements DesignAdapter {
   }
 
   private markLost(editor: Editor) {
+    if (!editor.lost) this.diagnostics.lifecycle('editor_lost');
     if (editor.pending) {
       // All handles for this file share an epoch. Reopening with a new handle
       // permits readback; no old handle can silently acknowledge lost writes.
@@ -96,7 +98,12 @@ export class HeadlessAdapter implements DesignAdapter {
     return client;
   }
 
-  private async call(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  private call(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+    this.diagnostics.count('upstreamCalls');
+    return this.diagnostics.span('upstreamMs', () => this.upstreamCall(name, args));
+  }
+
+  private async upstreamCall(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     const client = await this.upstream();
     try {
       const result = normalizeUpstreamResult(CallToolResultSchema.parse(await client.callTool({ name, arguments: args }, CallToolResultSchema, { timeout: this.config.timeoutMs })));
@@ -127,6 +134,7 @@ export class HeadlessAdapter implements DesignAdapter {
       const context = await browser.newContext({ storageState: this.config.storageState, locale: 'en-US', viewport: { width: 1440, height: 1000 } });
       await this.routeMcp(context);
       this.browser = browser; this.context = context;
+      this.diagnostics.lifecycle('browser_started');
       browser.on('disconnected', () => { if (this.browser === browser && this.editor) this.markLost(this.editor); });
     } catch (error) {
       await browser.close().catch(() => {});
@@ -159,7 +167,11 @@ export class HeadlessAdapter implements DesignAdapter {
     });
   }
 
-  private async activate(target: DocumentTarget, verify = true) {
+  private activate(target: DocumentTarget, verify = true) {
+    return this.diagnostics.span('activationMs', () => this.activateEditor(target, verify));
+  }
+
+  private async activateEditor(target: DocumentTarget, verify: boolean) {
     this.observeLoss();
     if (this.editor?.lost) await this.close(true);
     await this.launch();
@@ -170,7 +182,7 @@ export class HeadlessAdapter implements DesignAdapter {
     if (this.editor) {
       await this.waitForSave();
       const previous = this.editor;
-      await previous.page.close(); this.editor = undefined;
+      this.editor = undefined; await previous.page.close();
       this.pruneFile(previous.target.fileId, previous.file);
       // Closing a page starts an asynchronous WS close handshake. Retire its
       // relay sockets before opening another plugin with this routing token.
@@ -182,7 +194,7 @@ export class HeadlessAdapter implements DesignAdapter {
       const editor: Editor = { target, file: binding.file, page, ready: false, lost: false, lostWrites: false,
         pending: false, saves: new Set(), saveActivity: 0, saveFailed: false, needsSaveCheck: true };
       this.editor = editor;
-      page.on('close', () => this.markLost(editor));
+      page.on('close', () => { if (this.editor === editor) this.markLost(editor); });
       page.on('crash', () => this.markLost(editor));
       editor.devtools = await this.context!.newCDPSession(page);
       this.observeSaves(editor);
@@ -193,6 +205,7 @@ export class HeadlessAdapter implements DesignAdapter {
       if (await login.isVisible()) throw new GatewayError('AUTH_REQUIRED', 'The Penpot session expired. Run npm run auth again.');
       await this.connectPlugin(editor);
       editor.ready = true;
+      this.diagnostics.lifecycle('editor_ready');
     } catch (error) {
       // A failed editor initialization has dispatched no user code. Roll it
       // back immediately; an unloaded page cannot supply a saved indicator.
@@ -228,6 +241,7 @@ export class HeadlessAdapter implements DesignAdapter {
     let lastConnect = 0;
     do {
       if (await this.matches(editor.target)) return;
+      this.diagnostics.count('connectionProbeRetries');
       if (Date.now() - lastConnect >= 5000) {
         try {
           await button.evaluate(el => {
@@ -255,7 +269,11 @@ export class HeadlessAdapter implements DesignAdapter {
     } catch { return false; }
   }
 
-  private async waitForSave() {
+  private waitForSave() {
+    return this.diagnostics.span('saveMs', () => this.confirmSave());
+  }
+
+  private async confirmSave() {
     this.observeLoss();
     const editor = this.editor;
     if (!editor) return;
@@ -330,6 +348,7 @@ return {fileId:penpot.currentFile.id,pageId:penpot.currentPage.id,pages:penpotUt
     this.assertCertain(source);
     this.binding(target);
     this.editor!.target = target;
+    this.diagnostics.lifecycle('page_selected');
     return result;
   }
 
@@ -361,7 +380,11 @@ return {fileId:penpot.currentFile.id,pageId:penpot.currentPage.id,pages:penpotUt
 
   async documentation(name: 'high_level_overview' | 'penpot_api_info', args: Record<string, unknown>) { return this.call(name, args); }
 
-  async close(force = false) {
+  close(force = false) {
+    return this.diagnostics.span('cleanupMs', () => this.closeResources(force));
+  }
+
+  private async closeResources(force: boolean) {
     let saveError: unknown;
     if (!force) {
       try { await this.waitForSave(); }
@@ -385,6 +408,7 @@ return {fileId:penpot.currentFile.id,pageId:penpot.currentPage.id,pages:penpotUt
     this.sockets.clear();
     await browser?.close().catch(() => {});
     await client?.close().catch(() => {});
+    if (browser) this.diagnostics.lifecycle('browser_closed', force);
     if (saveError) throw saveError;
   }
 }

@@ -18,6 +18,7 @@
     "test:batch": "tsx test/batch.ts",
     "test:lifecycle": "tsx test/lifecycle.ts",
     "test:pages": "tsx test/pages.ts",
+    "test:diagnostics": "tsx test/diagnostics.ts",
     "test:load": "tsx test/load.ts",
     "auth": "tsx src/auth-cli.ts",
     "init": "node scripts/init-state.mjs",

@@ -19,6 +19,7 @@ services:
       PENPOT_STORAGE_STATE: /app/.state/session.json
       PENPOT_UPSTREAM_HTTP: http://upstream:4401/mcp
       PENPOT_UPSTREAM_WS: ws://upstream:4402
+      PENPOT_DIAGNOSTICS: ${PENPOT_DIAGNOSTICS:-true}
       GATEWAY_TOKEN_FILE: /app/.state/gateway-token
       HOST: 0.0.0.0
     volumes: ["./.state:/app/.state:ro"]
