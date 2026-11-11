@@ -40,25 +40,26 @@ Tests default to `.state/latest-targets.json` and `.state/latest-session.json`. 
 
 ## Existing installations
 
-Provide a manifest for two dedicated files and an authorized storageState:
+Set `E2E_TARGETS_FILE` and `PENPOT_STORAGE_STATE` in your private `.env`, using [.env.example](../.env.example) as a reference. The manifest must contain two dedicated files and the storageState must be authorized for that site:
 
 ```bash
-E2E_TARGETS_FILE=.state/acceptance-targets.json PENPOT_STORAGE_STATE=.state/session.json npm run test:acceptance
-# Test the already deployed HTTP gateway instead.
-E2E_TARGETS_FILE=.state/acceptance-targets.json E2E_HTTP_URL=http://127.0.0.1:4545/mcp npm run test:acceptance
+npm run build
+node --env-file=.env --import tsx test/e2e.ts
+node --env-file=.env --import tsx test/multi-client.ts
+# To test an existing HTTP gateway, also set E2E_HTTP_URL in .env.
 ```
 
 The HTTP token is read from `.state/gateway-token` without logging it. Manifest format: `{ "base": "site origin", "files": [{ "id": "file UUID A", "name": "Headless acceptance A", "url": "workspace URL A" }, { "id": "file UUID B", "name": "Headless acceptance B", "url": "workspace URL B" }] }`. These test files must already exist; scripts do not search user designs.
 
-Load tests require an explicit `E2E_TARGETS_FILE`; also set `PENPOT_STORAGE_STATE` for existing sites. Fixtures are cleaned by default; `LOAD_KEEP_FIXTURE=1` retains load-test shapes. See [performance](performance.md) for workload options and reproduction.
+Load tests require an explicit `E2E_TARGETS_FILE`; set the matching `PENPOT_STORAGE_STATE` in `.env` for an existing site. Fixtures are cleaned by default; `LOAD_KEEP_FIXTURE=1` retains load-test shapes. See [performance](performance.md) for workload options and reproduction.
 
 ## Coverage
 
 The suite checks same-file serialization and cross-file overlap with four independent clients, page/handle targeting, save confirmation and cold readback, uncertain writes, capacity limits, reclamation, shutdown recovery, error classification, and log redaction. Shutdown coverage includes a 12-second write, repeated SIGTERM, an injected close failure, recovery reads, and automatic retries.
 
-The deployed upstream's four public MCP tools were covered; this does not validate every Plugin API, read-only role, or permission-revocation combination. Viewer/share links, multiple tenants/sites, and automatic SSO/MFA renewal remain outside the implementation scope.
+The suite exercises the upstream's public MCP tools; this does not validate every Plugin API, read-only role, or permission-revocation combination. Viewer/share links, multiple tenants/sites, and automatic SSO/MFA renewal remain outside the implementation scope.
 
-Recorded reports in `test-results/`: `acceptance.json`, `multi-client.json`, `editor.json`, `faults.json`, `shutdown.json`, `local-report.json`, and `local-report.json`. Benchmark conditions and results live in [performance](performance.md).
+Reports stay in ignored `test-results/`. Keep deployment-specific results local; use the [performance guide](performance.md) to reproduce measurements for your workload.
 
 ## Cleanup
 

@@ -35,7 +35,7 @@ Page changes, close, and reclamation confirm saves first. Unconfirmed saves reta
 
 Initialization failures release incomplete resources; failed idle reclamation retries on the next idle cycle. Shutdown drains accepted work and saves before closing transports. Failure keeps the recovery endpoint available and retries every 5 seconds; Compose allows 5 minutes before a forced stop. Handles exist only in the gateway process and expire on restart.
 
-The adapter clears inspector references with `Runtime.discardConsoleEntries` after plugin results, preserving MCP logs and Plugin storage without forcing GC. See [performance](performance.md) for the measured effect and the [agent guide](agent-guide.md) for recovery steps.
+The adapter clears inspector references with `Runtime.discardConsoleEntries` after plugin results, preserving MCP logs and Plugin storage without forcing GC. See [performance](performance.md) for measurement guidance and the [agent guide](agent-guide.md) for recovery steps.
 
 ## Diagnostic logs
 

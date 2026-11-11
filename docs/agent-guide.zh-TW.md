@@ -37,4 +37,4 @@ Handle 綁定檔案與頁面。每次 `open_page` 都產生新 handle，請關�
 | `WORKER_CAPACITY` | 其他檔案無法確認儲存，不能安全回收；先處理其儲存狀態。本次設計程式尚未執行。 |
 | `BUSY` | 等待既有工作完成並降低併發；接受中的操作上限為每檔 32、全域 128。 |
 
-API 文件不代表已取得權限。缺少 `user:read` 的 Plugin 無法存取 `activeUsers`。一般設計請省略 `currentUser` / `activeUsers` 探測；Gateway 不替 Plugin 擴權，升級後請驗證自己的站點。
+API 文件不代表已取得權限。缺少 `user:read` 的 Plugin 無法存取 `activeUsers`。一般設計請省略 `currentUser` / `activeUsers` 探測；Gateway 不替 Plugin 擴權，升級後應重跑 `npm run test:editor` 檢查自己的站點。

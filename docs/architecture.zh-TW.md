@@ -35,7 +35,7 @@ flowchart LR
 
 初始化失敗會釋放不完整資源；閒置回收失敗會在下個週期重試。關機先完成已接受工作與儲存，再關閉傳輸；失敗時保留恢復入口，每 5 秒重試，Compose 最多等待 5 分鐘後強制停止。Handles 只存在於目前 Gateway process，重啟後失效。
 
-Adapter 在 Plugin 回傳後用 `Runtime.discardConsoleEntries` 清除 inspector 參照，保留 MCP 日誌與 Plugin storage，不強制 GC。量測結果見[效能摘要](performance.zh-TW.md)，恢復步驟見 [Agent 指引](agent-guide.zh-TW.md)。
+Adapter 在 Plugin 回傳後用 `Runtime.discardConsoleEntries` 清除 inspector 參照，保留 MCP 日誌與 Plugin storage，不強制 GC。量測方式見[效能摘要](performance.zh-TW.md)，恢復步驟見 [Agent 指引](agent-guide.zh-TW.md)。
 
 ## 診斷紀錄
 

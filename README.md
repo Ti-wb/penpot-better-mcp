@@ -25,7 +25,7 @@ Editing and rendering use the official MCP and Plugin API. The `read_document` M
 
 **Editing and rendering automatically run headless Chromium on the gateway host.** Pure `read_document` calls do not launch a browser. It needs CPU and RAM for full Penpot editors. Large files, images, and more simultaneously open files increase that cost; the browser pool limits their number, not each editor's memory usage.
 
-Allow CPU and memory headroom for your files. Measure your own workload before choosing host capacity.
+Allow RAM and CPU headroom for the files you open. Measure your own workload before choosing host capacity; see the [performance guide](docs/performance.md) for a repeatable procedure and its limitations.
 
 The default is two resident file browsers. For a smaller VM or mostly one large file, start with `PENPOT_MAX_WORKERS=1`. Raising it enables more parallel files but does not make calls within one file parallel. Idle browsers are reclaimed after ten minutes by default and reopened when needed.
 
@@ -33,20 +33,16 @@ The default is two resident file browsers. For a smaller VM or mostly one large 
 
 Requires Docker Compose, Node.js 22+ for token initialization, and a Penpot account with access to the target files and permission to enable MCP. The login helper supports email/password login in your terminal.
 
-Create or edit `.env` with your Penpot origin, using [.env.example](.env.example) as a reference:
+For a new setup, copy [.env.example](.env.example) to `.env`; preserve an existing `.env`. Set your Penpot origin and client endpoint there. Keep real connection details out of tracked files and command examples.
 
-```dotenv
-PENPOT_BASE_URL=https://penpot.example.com
-```
-
-Run from the repository directory. Replace the login URL below with the same origin:
+Run from the repository directory. Both login and the gateway read `PENPOT_BASE_URL` from `.env` through Compose:
 
 ```bash
 node scripts/init-state.mjs
 docker compose build gateway
-docker compose run --rm auth --base-url https://penpot.example.com --enable-mcp
+docker compose run --rm auth --enable-mcp
 docker compose up -d upstream gateway
-curl http://127.0.0.1:4545/healthz
+docker compose ps gateway
 ```
 
 Run login in your own interactive terminal; the password is hidden and is not saved. `--enable-mcp` enables MCP when needed without rotating an existing valid key. Login must finish before starting the gateway. If your host UID/GID differs from `1000:1000`, set `LOCAL_UID` and `LOCAL_GID` in `.env` first.
@@ -56,7 +52,7 @@ The session and gateway token are stored locally in `.state` with mode `0600`, e
 ## Connect your MCP client
 
 - **Transport:** Streamable HTTP
-- **Endpoint:** `http://127.0.0.1:4545/mcp`
+- **Endpoint:** the `GATEWAY_HTTP_URL` value in your private `.env`
 - **Authorization header:** `Bearer <contents of .state/gateway-token>`
 
 Keep the token in the client's secret configuration: it grants access through the gateway's Penpot account. The supplied Compose setup binds to loopback; use an SSH tunnel for clients on another machine.
@@ -74,15 +70,16 @@ Reconnect or refresh tool discovery after upgrades if your client retains an old
 
 ## Configuration and tradeoffs
 
-Edit these settings in `.env`. The supplied [compose.yaml](compose.yaml) passes them to the relevant services:
+Edit these settings in `.env`. The supplied [compose.yaml](compose.yaml) passes service settings to the relevant containers; copy `GATEWAY_HTTP_URL` into your MCP client's private configuration:
 
 | Setting | Default | What it changes |
 |---|---|---|
-| `PENPOT_BASE_URL` | `https://penpot.example.com` | Set your Penpot origin, without a file path. Use HTTPS except for loopback test sites; sign in to the same origin. |
+| `PENPOT_BASE_URL` | Required | Set your Penpot origin, without a file path. Use HTTPS except for loopback test sites; login uses this same value. |
 | `PENPOT_MAX_WORKERS` | `2` | Resident file browsers, from `1` to `16`. More allows more parallel files and consumes more CPU/RAM. |
 | `PENPOT_IDLE_MS` | `600000` (10 min) | Idle time before browser reclamation; minimum `1000`. A shorter interval releases resources sooner but causes more editor reloads. |
 | `PENPOT_DIAGNOSTICS` | `true` | Set `false` to disable routine operation logs; shutdown failure logs remain available. |
 | `GATEWAY_PORT` | `4545` | Host HTTP port. Update the client endpoint when changing it. |
+| `GATEWAY_HTTP_URL` | Example in `.env.example` | MCP client endpoint; keep its port aligned with `GATEWAY_PORT`. It does not configure the container listener. |
 | `GATEWAY_STOP_GRACE_PERIOD` | `5m` | Time Docker allows for accepted work and saves to finish before forcing a stop. Shortening it can interrupt work. |
 | `LOCAL_UID` / `LOCAL_GID` | `1000` / `1000` | Container user IDs; match the owner of your local `.state` directory. |
 
@@ -93,6 +90,8 @@ docker compose up -d --force-recreate gateway
 ```
 
 Restarting invalidates document handles; clients must reopen documents. Changing the site also requires a session for the new site. `.env.example` includes additional native Node settings; only variables referenced by `compose.yaml` affect this Docker setup. Native Node reads shell environment variables or an explicit `node --env-file=.env dist/main.js`; it does not load `.env` automatically.
+
+For native login, use `node --env-file=.env --import tsx src/auth-cli.ts --enable-mcp`. Set upstream addresses and the session path in `.env`; keep session contents and tokens in the ignored `.state/` directory.
 
 To stop the service, use `docker compose down`. The gateway drains accepted operations and confirms saves before closing; failed shutdown saves are retried. Docker's grace period still bounds that wait.
 

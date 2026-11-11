@@ -16,7 +16,7 @@ services:
     shm_size: 1gb
     ports: ["127.0.0.1:${GATEWAY_PORT:-4545}:3000"]
     environment:
-      PENPOT_BASE_URL: ${PENPOT_BASE_URL:-https://penpot.example.com}
+      PENPOT_BASE_URL: ${PENPOT_BASE_URL:?Set PENPOT_BASE_URL in .env}
       PENPOT_STORAGE_STATE: /app/.state/session.json
       PENPOT_UPSTREAM_HTTP: http://upstream:4401/mcp
       PENPOT_UPSTREAM_WS: ws://upstream:4402
@@ -43,6 +43,8 @@ services:
     profiles: [tools]
     user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
     entrypoint: ["node", "dist/auth-cli.js"]
+    environment:
+      PENPOT_BASE_URL: ${PENPOT_BASE_URL:?Set PENPOT_BASE_URL in .env}
     stdin_open: true
     tty: true
     volumes: ["./.state:/app/.state"]

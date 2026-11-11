@@ -46,12 +46,14 @@ Sources: [official access-token integration](https://help.penpot.app/technical-g
 
 ## Validation
 
-`npm run test:reads` uses dedicated acceptance files and removes only its own test shapes/pages. It compares saved fields with the Plugin API, exercises deferred-write visibility and page reads, checks snapshot invalidation, then compares cold/warm scans, a single-shape lookup and eight concurrent readers. Set `READ_SHAPES` (default 3000) and `READ_SAMPLES` (default 12) to change the workload. Existing installations use the same manifest/session overrides as [other integration tests](testing.md).
+`npm run test:reads` uses dedicated acceptance files and removes only its own test shapes/pages. It compares saved fields with the Plugin API, exercises deferred-write visibility and page reads, checks snapshot invalidation, then compares cold/warm scans, a single-shape lookup and eight concurrent readers. Set `READ_SHAPES` (default 3000) and `READ_SAMPLES` (default 12) to change the workload. For an existing site, configure the manifest, session path, and upstream addresses in your private `.env`, then run `node --env-file=.env --import tsx test/browserless.ts`; see [testing](testing.md).
 
-Results are written to ignored `test-results/browserless-isolated.json` or `local-report.json`. Browser RSS is a sum across browser processes, not unique physical memory; Node RSS includes test/client/serialization allocations. A cold scan clears the file cache/reopens the editor inside an already running gateway; it includes editor startup only for the browser path. Warm comparisons use equal field projections; save confirmation happens outside the timed read scans. These are workload-specific measurements, not a universal speed guarantee. The short soak does not prove leak freedom, and CPU usage was not measured independently.
+Results are written to ignored `test-results/` files; keep deployment-specific reports local. Browser RSS is a sum across browser processes, not unique physical memory; Node RSS includes test/client/serialization allocations. A cold scan clears the file cache/reopens the editor inside an already running gateway; it includes editor startup only for the browser path. Warm comparisons use equal field projections; save confirmation happens outside the timed read scans. These are workload-specific measurements, not a universal speed guarantee. The short soak does not prove leak freedom, and CPU usage was not measured independently.
 
 Unit tests cover denied/expired sessions, credential rotation, cache failure, output limits and queue behavior with mocked backend responses. Real-instance tests use the authorized test account; live read-only-role and permission-revocation scenarios have not been exercised.
 
 ## Performance guidance
 
-Measure your own workload with the documented test scripts. Keep deployment details and raw results in ignored local reports.
+Compare both paths on the same page with identical fields, batch sizes, and fixture shapes. Measure cold scans, warm scans, single-shape lookups, and concurrent readers separately. Include save confirmation when timing a write followed by a read.
+
+Backend reads avoid browser startup and editor residency, but every call still incurs backend/network work. High backend latency can reduce that benefit. Closing edit handles releases retained browsers; pure reads then require no browser processes. Use the [performance guide](performance.md) to measure your own workload and retain environment details and raw results only in ignored local reports.

@@ -40,25 +40,26 @@ npm run test:acceptance
 
 ## 既有站點驗收
 
-提供兩個專用檔案的 manifest，以及已授權的 storageState：
+參考 [.env.example](../.env.example)，在私人 `.env` 設定 `E2E_TARGETS_FILE` 與 `PENPOT_STORAGE_STATE`。Manifest 須包含兩個專用檔案，storageState 須具備該站點的存取權限：
 
 ```bash
-E2E_TARGETS_FILE=.state/acceptance-targets.json PENPOT_STORAGE_STATE=.state/session.json npm run test:acceptance
-# 改測已部署的 HTTP Gateway。
-E2E_TARGETS_FILE=.state/acceptance-targets.json E2E_HTTP_URL=http://127.0.0.1:4545/mcp npm run test:acceptance
+npm run build
+node --env-file=.env --import tsx test/e2e.ts
+node --env-file=.env --import tsx test/multi-client.ts
+# 若要測試既有 HTTP Gateway，另在 .env 設定 E2E_HTTP_URL。
 ```
 
 HTTP token 從 `.state/gateway-token` 讀取，不寫入紀錄。Manifest 格式：`{ "base": "site origin", "files": [{ "id": "file UUID A", "name": "Headless acceptance A", "url": "workspace URL A" }, { "id": "file UUID B", "name": "Headless acceptance B", "url": "workspace URL B" }] }`。專用測試檔必須事先存在，腳本不會搜尋使用者設計。
 
-負載測試需明確設定 `E2E_TARGETS_FILE`；使用既有站點站點時另設 `PENPOT_STORAGE_STATE`。預設清理 fixture，`LOAD_KEEP_FIXTURE=1` 才保留負載圖形。參數與重現方式見[效能摘要](performance.zh-TW.md)。
+負載測試需明確設定 `E2E_TARGETS_FILE`；既有站點需在 `.env` 設定對應的 `PENPOT_STORAGE_STATE`。預設清理 fixture，`LOAD_KEEP_FIXTURE=1` 才保留負載圖形。參數與重現方式見[效能指南](performance.zh-TW.md)。
 
 ## 覆蓋範圍
 
 測試以四個獨立 clients 檢查同檔序列化與跨檔重疊，並涵蓋頁面／handle 目標、儲存確認與冷讀、未知寫入、容量限制、回收、關機恢復、錯誤分類與紀錄遮罩。關機情境包含 12 秒寫入、重複 SIGTERM、注入一次 close 失敗、恢復讀取與自動重試。
 
-已覆蓋部署中官方上游的四個公開 MCP 工具，不代表每個 Plugin API、唯讀角色或動態撤權組合均已驗證。Viewer／分享連結、多租戶／跨站與 SSO/MFA 自動更新仍不在實作範圍。
+測試會操作官方上游的公開 MCP 工具，不代表每個 Plugin API、唯讀角色或動態撤權組合均已驗證。Viewer／分享連結、多租戶／跨站與 SSO/MFA 自動更新仍不在實作範圍。
 
-既有報告位於 `test-results/`：`acceptance.json`、`multi-client.json`、`editor.json`、`faults.json`、`shutdown.json`、`local-report.json` 與 `local-report.json`。效能測試條件與結果另見[效能摘要](performance.zh-TW.md)。
+報告保存在已忽略的 `test-results/`，部署專用的結果請留在本機；依[效能指南](performance.zh-TW.md)重現自己的負載量測。
 
 ## 收尾
 

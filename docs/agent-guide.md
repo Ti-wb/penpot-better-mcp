@@ -37,4 +37,4 @@ Agents editing one file share Plugin storage. Use separate key prefixes and agre
 | `WORKER_CAPACITY` | Other files cannot confirm saves and cannot be reclaimed safely. Resolve their save state first; this call's design code has not run. |
 | `BUSY` | Wait for pending work and reduce concurrency. Limits are 32 accepted operations per file and 128 globally. |
 
-API documentation does not grant permissions. A plugin without `user:read` cannot access `activeUsers`. Avoid probing `currentUser` / `activeUsers` for ordinary design work. The gateway does not expand plugin permissions; validate your own installation after upgrades.
+API documentation does not grant permissions. A plugin without `user:read` cannot access `activeUsers`. Avoid probing `currentUser` / `activeUsers` for ordinary design work. The gateway does not expand plugin permissions; rerun `npm run test:editor` after upgrades to check your installation.
